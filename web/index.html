@@ -2,6 +2,13 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101c24"><title>N1 收音机</title><link rel="stylesheet" href="/style.css"></head>
 <body><main><header><span class="mark">◉</span><span>N1 收音机</span><span id="connection" class="tag">连接中</span></header>
 <section class="dial"><p class="eyebrow">正在收听</p><div class="frequency"><span id="frequency">—</span><span class="unit">MHz</span></div><div class="details"><span id="mode">FM</span><span id="stereo">—</span></div><div class="scale" aria-hidden="true"></div></section>
+<section class="tuning" aria-label="调台">
+<form id="tuneForm"><label for="tuneFrequency">频率（MHz）</label><div class="tune-row"><input id="tuneFrequency" type="number" min="0.5" max="1766" step="any" inputmode="decimal" required aria-label="频率 MHz"><select id="tuneMode" aria-label="接收模式"><option>FM</option><option>AM</option><option>USB</option><option>LSB</option><option>NFM</option></select><button id="tuneSubmit" type="submit">调台</button></div></form>
+<div class="step-row"><button id="stepDown" type="button" aria-label="向下调台">−</button><select id="stepSize" aria-label="调台步进"><option value="100">100 Hz</option><option value="1000">1 kHz</option><option value="10000">10 kHz</option><option value="100000" selected>100 kHz</option><option value="1000000">1 MHz</option></select><button id="stepUp" type="button" aria-label="向上调台">＋</button><button id="showSave" type="button">收藏当前</button></div>
+<p id="controlNotice" role="status">调台和收藏与 N1 及其他设备同步。</p>
+<form id="saveForm" hidden><label id="saveTarget" for="presetName">收藏当前电台</label><div class="save-row"><input id="presetName" maxlength="24" placeholder="电台名称" required><button type="submit">保存</button><button id="cancelSave" type="button" class="secondary">取消</button></div></form>
+</section>
 <section class="programme"><h1 id="station">等待电台信息</h1><p id="programme">正在连接 N1…</p></section>
 <section class="controls"><button id="play" type="button" disabled>▶ 开始收听</button><label for="volume">本机音量 <span id="volumeText">80%</span></label><input id="volume" type="range" min="0" max="100" value="80" aria-label="本机播放音量"><p id="notice" role="status">点击开始收听，在这台设备播放。</p></section>
-<footer>与 N1 共用当前电台 · 调台请在 N1 收音机或终端操作</footer><audio id="audio" preload="none"></audio></main><script src="/app.js"></script></body></html>
+<section class="presets"><div class="presets-heading"><h2>收藏电台</h2><span id="presetCount">0 / 16</span></div><div id="presetList"><p class="empty">正在同步收藏…</p></div></section>
+<footer>调台影响所有听众 · 播放音量仅影响本设备</footer><audio id="audio" preload="none"></audio></main><script src="/app.js"></script></body></html>

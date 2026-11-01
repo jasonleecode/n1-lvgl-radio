@@ -70,12 +70,32 @@ with tempfile.TemporaryDirectory(prefix='n1-ctl-') as temp:
         assert not command('status')['active']
         assert command('presets')['presets'] == []
         command('preset', '1', ok=False)
+        def ipc(**payload):
+            return wire(json.dumps(payload,ensure_ascii=False,separators=(',',':')).encode())
+        for bad in ['', '  ', 'bad\nname', '零'*27, 'a\x00b']:
+            assert not ipc(command='preset_save',value=97400000,mode='FM',name=bad)['ok']
+        assert not wire(b'{"command":"preset_save","value":97400000,"mode":"FM","name":"\xff"}')['ok']
+        assert ipc(command='preset_save',value=97400000,mode='FM',name='测试甲')['ok']
+        assert ipc(command='preset_save',value=99600000,mode='FM',name='测试乙')['ok']
+        assert ipc(command='preset_save',value=97400000,mode='FM',name='甲改名')['ok']
+        saved=command('presets')['presets'];assert len(saved)==2 and saved[0]['name']=='甲改名'
+        # Saving presets must not retune or start the receiver.
+        assert command('status')['frequency_hz']==97300000 and not command('status')['active']
+        assert ipc(command='preset_delete',value=1,frequency_hz=97400000,mode='FM')['ok']
+        # A different client still holding index 1 cannot delete its new occupant.
+        assert not ipc(command='preset_delete',value=1,frequency_hz=97400000,mode='FM')['ok']
+        assert command('presets')['presets'][0]['name']=='测试乙'
+        assert ipc(command='preset_delete',value=1,frequency_hz=99600000,mode='FM')['ok']
+        for i in range(16):assert ipc(command='preset_save',value=90000000+i*100000,mode='FM',name='收藏'+str(i))['ok']
+        assert not ipc(command='preset_save',value=100000000,mode='FM',name='超额')['ok']
+        assert len(command('presets')['presets'])==16
         command('quit')
         process.communicate(timeout=8)
         assert process.returncode == 0
         assert not Path(path).exists()
         settings = (Path(temp) / 'n1-radio/settings.ini').read_text()
         assert 'frequency=97300000' in settings and 'volume=42' in settings
+        assert settings.count('station=')==16 and '收藏15' in settings
         # A stale socket left after SIGKILL must be recoverable.
         old = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         old.bind(path)

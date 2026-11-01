@@ -1,0 +1,31 @@
+{
+  "feature": "Web tuning and host-synchronized presets",
+  "release_tests": "8/8 passed",
+  "ASan_UBSan_tests": "8/8 passed",
+  "N1_binary_sha256": "40e12d1e5393109aaff4d2f7ef13febc74babd810a9d275f04ede5d46a0b396b",
+  "N1_tests": [
+    "web tune reflected in another browser and host CLI",
+    "favorite add/rename deduplicates and updates both browsers plus host",
+    "actual desktop preset click updates both web pages",
+    "web +/- steps update both pages without stopping browser audio",
+    "CLI tune reflected in both pages",
+    "web delete updates both pages plus host",
+    "temporary test favorite removed; original favorite list retained"
+  ],
+  "desktop_visual_check": "new Chinese favorite appeared immediately in host list",
+  "browser_errors": [],
+  "mobile_width": 390,
+  "mobile_horizontal_overflow": false,
+  "automated_edge_cases": [
+    "same-origin POST required",
+    "invalid and unsupported commands rejected",
+    "UTF-8 and preset name validation",
+    "maximum 16 favorites",
+    "stale index deletion rejected",
+    "preset mutations do not retune or start reception",
+    "favorites written to host settings file"
+  ],
+  "user_acceptance": "Accepted for publication by user",
+  "GitHub_upload": "Authorized by user",
+  "application_version": "0.4.0"
+}

@@ -77,6 +77,30 @@ static json_object *execute(json_object *req,radio_config *c,radio_engine *e,boo
   if(m==MODE_COUNT)return reply(false,"模式需为 FM/AM/USB/LSB/NFM");
   next.mode=m;validate=true;
  }
+ else if(!strcmp(cmd,"preset_save")) {
+  json_object *name,*mode;
+  if(!has || !json_object_is_type(v,json_type_int) || !json_object_object_get_ex(req,"mode",&mode) || !json_object_is_type(mode,json_type_string) || !json_object_object_get_ex(req,"name",&name) || !json_object_is_type(name,json_type_string))return reply(false,"收藏需要频率、模式和名称");
+  int m;for(m=0;m<MODE_COUNT;m++)if(!strcmp(json_object_get_string(mode),radio_mode_name(m)))break;
+  if(m==MODE_COUNT)return reply(false,"收藏模式无效");
+  radio_config check=*c;check.hz=json_object_get_int64(v);check.mode=m;char error[256];
+  if(!radio_validate(&check,error,sizeof(error)))return reply(false,error);
+  const char *text=json_object_get_string(name);size_t len=json_object_get_string_len(name);
+  if(strlen(text)!=len)return reply(false,"收藏名称无效");
+  while(len && *text==' '){text++;len--;}while(len && text[len-1]==' ')len--;
+  if(!len || len>=STATION_NAME)return reply(false,"请输入收藏名称，最多 79 字节");
+  for(size_t j=0;j<len;j++)if((unsigned char)text[j]<32 || (unsigned char)text[j]==127)return reply(false,"收藏名称不能包含换行或控制字符");
+  int i;for(i=0;i<next.count;i++)if(next.stations[i].hz==check.hz && next.stations[i].mode==check.mode)break;
+  if(i==next.count){if(next.count>=MAX_STATIONS)return reply(false,"最多保存 16 个电台，请先移除一个");next.count++;}
+  station *p=&next.stations[i];memset(p,0,sizeof(*p));p->hz=check.hz;p->mode=check.mode;memcpy(p->name,text,len);
+ }
+ else if(!strcmp(cmd,"preset_delete")) {
+  json_object *hz,*mode;
+  if(!has || !json_object_is_type(v,json_type_int) || json_object_get_int64(v)<1 || json_object_get_int64(v)>next.count)return reply(false,"收藏已变化，请刷新重试");
+  int i=json_object_get_int(v)-1;station *p=&next.stations[i];
+  if(!json_object_object_get_ex(req,"frequency_hz",&hz) || !json_object_is_type(hz,json_type_int) || json_object_get_int64(hz)!=p->hz || !json_object_object_get_ex(req,"mode",&mode) || !json_object_is_type(mode,json_type_string) || strcmp(json_object_get_string(mode),radio_mode_name(p->mode)))return reply(false,"收藏已变化，请刷新重试");
+  for(int j=i;j<next.count-1;j++)next.stations[j]=next.stations[j+1];
+  memset(&next.stations[--next.count],0,sizeof(station));
+ }
  else if(!strcmp(cmd,"preset")) {
   if(!has || !json_object_is_type(v,json_type_int) || json_object_get_int64(v)<1 || json_object_get_int64(v)>c->count)return reply(false,"收藏编号不存在");
   station *p=&c->stations[json_object_get_int(v)-1];next.hz=p->hz;next.mode=p->mode;start=true;validate=true;
@@ -97,7 +121,7 @@ void control_poll(radio_control *s,radio_config *c,radio_engine *e,bool *updated
  for(int i=0;i<8;i++)if(s->clients[i]>=0) {
   char buffer[4096];ssize_t n=recv(s->clients[i],buffer,sizeof(buffer),MSG_DONTWAIT|MSG_TRUNC);
   if(n<0 && (errno==EAGAIN || errno==EWOULDBLOCK) && rds_now_ms()<s->deadlines[i])continue;
-  if(n>0){json_object *req=NULL,*response;json_tokener *tok=json_tokener_new();
+  if(n>0){json_object *req=NULL,*response;json_tokener *tok=json_tokener_new();json_tokener_set_flags(tok,JSON_TOKENER_VALIDATE_UTF8);
    if(n<(ssize_t)sizeof(buffer)){req=json_tokener_parse_ex(tok,buffer,(int)n);if(json_tokener_get_error(tok)!=json_tokener_success || json_tokener_get_parse_end(tok)!=(size_t)n){if(req)json_object_put(req);req=NULL;}}
    response=req && json_object_is_type(req,json_type_object)?execute(req,c,e,updated,quit):reply(false,"无效或过长的 JSON 请求");
    const char *out=json_object_to_json_string_ext(response,JSON_C_TO_STRING_PLAIN);send(s->clients[i],out,strlen(out),MSG_NOSIGNAL|MSG_DONTWAIT);

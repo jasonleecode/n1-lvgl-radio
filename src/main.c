@@ -289,11 +289,14 @@ static void create_ui(void) {
 }
 static void poll_control(void) {
     if(!control_ready)return;
+    radio_config before=cfg;
     bool updated=false,quit=false;control_poll(&control,&cfg,&engine,&updated,&quit);
     if(updated){
         bool live;float level;char message[256];engine_snapshot(&engine,&active,&live,message,sizeof(message),&level);
         if(!headless){band=infer_band();refresh_tuning();lv_slider_set_value(volume_slider,cfg.volume,LV_ANIM_OFF);char value[16];snprintf(value,sizeof(value),"%d%%",cfg.volume);lv_label_set_text(volume_label,value);lv_label_set_text(mute_label,cfg.mute?"取消静音":"静音");}
-        save_pending=true;save_due=rds_now_ms()+750;
+        bool presets_changed=before.count!=cfg.count || memcmp(before.stations,cfg.stations,sizeof(cfg.stations));
+        if(presets_changed){if(!headless)refresh_presets();save();}
+        else {save_pending=true;save_due=rds_now_ms()+750;}
     }
     if(quit)exiting=1;
 }
