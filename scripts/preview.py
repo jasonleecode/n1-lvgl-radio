@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Render on an isolated X server, capture the actual framebuffer, no UI automation."""
 from pathlib import Path
-import os,struct,subprocess,tempfile,time,zlib
+import os,struct,subprocess,tempfile,time,zlib,sys
 out=Path('/home/n1/.cache/n1-radio');out.mkdir(parents=True,exist_ok=True)
 def chunk(tag,b):return struct.pack('>I',len(b))+tag+b+struct.pack('>I',zlib.crc32(tag+b)&0xffffffff)
 with tempfile.TemporaryDirectory(prefix='n1-radio-preview-') as folder:
  with (out/'xvfb.log').open('w') as log:
-  server=subprocess.Popen(['Xvfb','-displayfd','1','-screen','0','1040x680x24','-nolisten','tcp','-fbdir',folder],stdout=subprocess.PIPE,stderr=log,text=True)
+  server=subprocess.Popen(['Xvfb','-displayfd','1','-screen','0','520x400x24','-nolisten','tcp','-fbdir',folder],stdout=subprocess.PIPE,stderr=log,text=True)
   app=None
   try:
    display=server.stdout.readline().strip();assert display.isdigit()
    env=dict(os.environ,DISPLAY=':'+display,SDL_VIDEODRIVER='x11',SDL_RENDER_DRIVER='software')
    with (out/'preview.log').open('w') as app_log:
-    app=subprocess.Popen(['/opt/n1-radio/bin/n1-radio','--demo','--exit-after','7'],env=env,stdout=app_log,stderr=subprocess.STDOUT)
+    app=subprocess.Popen(['/opt/n1-radio/bin/n1-radio','--demo','--exit-after','7']+sys.argv[1:],env=env,stdout=app_log,stderr=subprocess.STDOUT)
     time.sleep(3);assert app.poll() is None,app.returncode
     data=(Path(folder)/'Xvfb_screen0').read_bytes();h=struct.unpack('>25I',data[:100]);header,version,fmt,depth,w,height,xoffset,order,unit,bitorder,pad,bpp,stride,visual,red,green,blue,bits,entries,colors=h[:20]
     assert version==7 and bpp==32

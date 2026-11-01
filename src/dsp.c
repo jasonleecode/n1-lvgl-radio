@@ -16,10 +16,15 @@ void fm_resampler_init(fm_resampler *s) {
   for(unsigned k=0;k<FM_TAPS;k++)s->coeff[p][k]/=(float)sum;
  }
 }
+void fm_resampler_enable_deemphasis(fm_resampler *s) {
+ s->alpha=1.0f-expf(-1.0f/(FM_INPUT_RATE*75e-6f));
+}
 size_t fm_resampler_process(fm_resampler *s,const int16_t *in,size_t count,int16_t *out,size_t capacity) {
  size_t produced=0;
  for(size_t i=0;i<count;i++) {
-  s->history[s->pos]=(float)in[i];unsigned latest=s->pos;s->pos=(s->pos+1)%FM_TAPS;
+  float sample=(float)in[i];
+  if(s->alpha>0){s->deemphasis+=s->alpha*(sample-s->deemphasis);sample=s->deemphasis;}
+  s->history[s->pos]=sample;unsigned latest=s->pos;s->pos=(s->pos+1)%FM_TAPS;
   s->phase+=FM_OUTPUT_RATE;if(s->phase<FM_INPUT_RATE)continue;s->phase-=FM_INPUT_RATE;
   unsigned phase=s->phase/(FM_OUTPUT_RATE/FM_PHASES);float y=0;
   for(unsigned k=0,j=latest;k<FM_TAPS;k++,j=j?j-1:FM_TAPS-1)y+=s->history[j]*s->coeff[phase][k];

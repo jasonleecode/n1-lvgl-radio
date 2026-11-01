@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <pthread.h>
+#include "rds.h"
 #define MAX_STATIONS 16
 #define STATION_NAME 80
 #define RADIO_MIN_HZ 500000LL
@@ -30,6 +31,7 @@ typedef struct {
     float audio_level;
     char message[256];
     uint64_t audio_samples;
+    rds_info rds;
 } radio_engine;
 
 void config_defaults(radio_config *c);
@@ -42,5 +44,6 @@ bool config_save(const radio_config *c, const char *path);
 bool engine_init(radio_engine *e, const radio_config *c);
 void engine_apply(radio_engine *e, const radio_config *c, bool active);
 void engine_snapshot(radio_engine *e, bool *active, bool *receiving, char *message, unsigned size, float *level);
+void engine_rds_snapshot(radio_engine *e,rds_info *info);
 void engine_destroy(radio_engine *e);
 #endif

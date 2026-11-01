@@ -1,12 +1,13 @@
 #include "dsp.h"
 #include <assert.h>
+#include <stdbool.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #define PI 3.14159265358979323846
-static double level(double hz) {
- fm_resampler s;fm_resampler_init(&s);int16_t in[2400],out[500];double energy=0;size_t total=0;
+static double level(double hz,bool deemphasis) {
+ fm_resampler s;fm_resampler_init(&s);if(deemphasis)fm_resampler_enable_deemphasis(&s);int16_t in[2400],out[500];double energy=0;size_t total=0;
  for(int block=0;block<100;block++) {
   for(int i=0;i<2400;i++)in[i]=(int16_t)(10000*sin(2*PI*hz*(block*2400+i)/240000));
   size_t n=fm_resampler_process(&s,in,2400,out,500);assert(n==480);
@@ -15,8 +16,9 @@ static double level(double hz) {
  return sqrt(energy/total);
 }
 int main(void) {
- double pass=level(1000),pilot=level(19000),stereo=level(38000);
- assert(pass>6900 && pass<7200);assert(pilot<15);assert(stereo<15);
+ double pass=level(1000,false),pilot=level(19000,false),stereo=level(38000,false);
+ assert(pass>6900 && pass<7200);
+ double deemp=level(1000,true),expected=pass/sqrt(1+pow(2*PI*1000*75e-6,2));assert(fabs(deemp-expected)/expected<.01);assert(pilot<15);assert(stereo<15);
  // Chunk boundaries must not affect the stream or sample count.
  fm_resampler a,b;fm_resampler_init(&a);fm_resampler_init(&b);int16_t in[24000],x[4800],y[4800];
  for(int i=0;i<24000;i++)in[i]=(int16_t)(11000*sin(2*PI*3100*i/240000));

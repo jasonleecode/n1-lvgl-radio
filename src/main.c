@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "radio.h"
 #include <lvgl/lvgl.h>
+#include <SDL2/SDL.h>
 #include <lvgl/drivers/sdl/lv_sdl_window.h>
 #include <lvgl/drivers/sdl/lv_sdl_mouse.h>
 #include <lvgl/drivers/sdl/lv_sdl_mousewheel.h>
@@ -16,6 +17,9 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+#define WINDOW_WIDTH 1040
+#define WINDOW_HEIGHT 800
+
 LV_FONT_DECLARE(radio_font_20);
 LV_FONT_DECLARE(radio_font_76);
 static const unsigned BG=0x0D1820,CARD=0x15252F,INNER=0x1B303B,INK=0xEAF1EE,MUTED=0x96ADB4,TEAL=0x64D7C2,LINE=0x2B414C,RED=0xFFB0A3;
@@ -24,7 +28,7 @@ static radio_engine engine;
 static bool initialized=false,active=false,demo=false,cleaned=false;
 static volatile sig_atomic_t exiting=0;
 static char config_path[4096],notice[256];static uint32_t notice_until=0;
-static lv_obj_t *root,*freq_label,*mode_select,*step_select,*status_label,*clock_label,*play_label,*play_button,*mute_label,*volume_slider,*volume_label,*meter,*meter_label,*hardware_label,*preset_list,*band_label,*input_label;
+static lv_obj_t *root,*freq_label,*mode_select,*step_select,*status_label,*clock_label,*play_label,*play_button,*mute_label,*volume_slider,*volume_label,*meter,*meter_label,*hardware_label,*preset_list,*band_label,*input_label,*rds_name_label,*rds_text_label,*rds_meta_label;
 static lv_obj_t *overlay,*modal,*edit,*modal_error,*name_edit,*input_select,*offset_edit,*ppm_edit,*gain_select;
 static int current_step=1;
 static const int gains[]={-1,0,125,197,254,280,328,372,402,439,496};
@@ -33,7 +37,7 @@ static const char *band="FM 广播";
 static bool ui_play_state=false;
 
 static lv_obj_t *label(lv_obj_t *parent,const char *text,int x,int y,unsigned color) {
-    lv_obj_t *o=lv_label_create(parent);lv_label_set_text(o,text);lv_obj_set_pos(o,x,y);lv_obj_set_style_text_color(o,lv_color_hex(color),0);return o;
+    lv_obj_t *o=lv_label_create(parent);lv_obj_set_style_text_font(o,&radio_font_20,0);lv_label_set_text(o,text);lv_obj_set_pos(o,x,y);lv_obj_set_style_text_color(o,lv_color_hex(color),0);return o;
 }
 static lv_obj_t *panel(lv_obj_t *parent,int x,int y,int w,int h,unsigned color) {
     lv_obj_t *o=lv_obj_create(parent);lv_obj_remove_style_all(o);lv_obj_set_pos(o,x,y);lv_obj_set_size(o,w,h);
@@ -50,6 +54,7 @@ static lv_obj_t *button(lv_obj_t *parent,const char *text,int x,int y,int w,int 
     return o;
 }
 static void dropdown_style(lv_obj_t *o) {
+    lv_obj_set_style_text_font(o,&radio_font_20,0);
     lv_obj_set_style_bg_color(o,lv_color_hex(INNER),0);
     lv_obj_set_style_text_color(o,lv_color_hex(INK),0);
     lv_obj_set_style_border_color(o,lv_color_hex(LINE),0);
@@ -61,6 +66,7 @@ static void dropdown_style(lv_obj_t *o) {
         lv_obj_set_style_text_color(list,lv_color_hex(INK),0);
         lv_obj_set_style_text_font(list,&radio_font_20,0);
         lv_obj_set_style_bg_color(list,lv_color_hex(TEAL),LV_PART_SELECTED);
+        lv_obj_set_style_text_font(list,&radio_font_20,LV_PART_SELECTED);
         lv_obj_set_style_text_color(list,lv_color_hex(BG),LV_PART_SELECTED);
     }
 }
@@ -86,8 +92,8 @@ static void apply(void) {
 static void close_modal(void) {if(overlay){lv_obj_delete(overlay);overlay=NULL;modal=NULL;edit=NULL;}}
 static void close_event(lv_event_t *e){(void)e;close_modal();}
 static void make_modal(const char *title,int w,int h) {
-    close_modal();overlay=panel(lv_layer_top(),0,0,1040,680,BG);lv_obj_set_style_bg_opa(overlay,220,0);lv_obj_set_style_radius(overlay,0,0);
-    modal=panel(overlay,(1040-w)/2,(680-h)/2,w,h,CARD);label(modal,title,22,20,INK);
+    close_modal();overlay=panel(lv_layer_top(),0,0,WINDOW_WIDTH,WINDOW_HEIGHT,BG);lv_obj_set_style_text_font(overlay,&radio_font_20,0);lv_obj_set_style_bg_opa(overlay,220,0);lv_obj_set_style_radius(overlay,0,0);
+    modal=panel(overlay,(WINDOW_WIDTH-w)/2,(WINDOW_HEIGHT-h)/2,w,h,CARD);label(modal,title,22,20,INK);
     button(modal,"关闭",w-94,12,74,42,false,close_event,NULL);
     modal_error=label(modal,"",22,h-42,RED);lv_obj_set_width(modal_error,w-44);
 }
@@ -104,10 +110,10 @@ static void frequency_commit(lv_event_t *e) {
     int64_t hz=llround(value*1000000.0);close_modal();tune_frequency(hz);
 }
 static void show_frequency(lv_event_t *e) {
-    (void)e;make_modal("输入频率  /  MHz",620,540);edit=lv_textarea_create(modal);lv_obj_set_pos(edit,22,82);lv_obj_set_size(edit,576,54);
+    (void)e;make_modal("输入频率  /  MHz",620,540);edit=lv_textarea_create(modal);lv_obj_set_style_text_font(edit,&radio_font_20,0);lv_obj_set_pos(edit,22,82);lv_obj_set_size(edit,576,54);
     lv_textarea_set_one_line(edit,true);lv_textarea_set_accepted_chars(edit,"0123456789.");lv_textarea_set_max_length(edit,12);
     char text[32];snprintf(text,sizeof(text),"%.4f",cfg.hz/1000000.0);lv_textarea_set_text(edit,text);
-    lv_obj_t *kb=lv_keyboard_create(modal);lv_obj_set_pos(kb,14,210);lv_obj_set_size(kb,592,260);lv_keyboard_set_mode(kb,LV_KEYBOARD_MODE_NUMBER);lv_keyboard_set_textarea(kb,edit);
+    lv_obj_t *kb=lv_keyboard_create(modal);lv_obj_set_align(kb,LV_ALIGN_TOP_LEFT);lv_obj_set_style_text_font(kb,&radio_font_20,0);lv_obj_set_style_text_font(kb,&radio_font_20,LV_PART_ITEMS);lv_obj_set_pos(kb,14,210);lv_obj_set_size(kb,592,260);lv_keyboard_set_mode(kb,LV_KEYBOARD_MODE_NUMBER);lv_keyboard_set_textarea(kb,edit);
     lv_obj_add_event_cb(kb,frequency_commit,LV_EVENT_READY,NULL);lv_obj_add_event_cb(kb,close_event,LV_EVENT_CANCEL,NULL);
     button(modal,"调到此频率",22,150,220,44,true,frequency_commit,NULL);
     lv_obj_add_event_cb(edit,frequency_commit,LV_EVENT_READY,NULL);
@@ -153,10 +159,10 @@ static void preset_commit(lv_event_t *e) {
 }
 static void show_preset(lv_event_t *e) {
     (void)e;if(cfg.count>=MAX_STATIONS){tell("收藏已满：最多 16 个电台");return;}
-    make_modal("收藏当前电台",620,540);name_edit=lv_textarea_create(modal);lv_obj_set_pos(name_edit,22,82);lv_obj_set_size(name_edit,576,54);lv_textarea_set_one_line(name_edit,true);lv_textarea_set_max_length(name_edit,24);
+    make_modal("收藏当前电台",620,540);name_edit=lv_textarea_create(modal);lv_obj_set_style_text_font(name_edit,&radio_font_20,0);lv_obj_set_pos(name_edit,22,82);lv_obj_set_size(name_edit,576,54);lv_textarea_set_one_line(name_edit,true);lv_textarea_set_max_length(name_edit,24);
     char text[80];snprintf(text,sizeof(text),"电台 %02d",cfg.count+1);lv_textarea_set_text(name_edit,text);
     button(modal,"保存电台",22,150,200,44,true,preset_commit,NULL);
-    lv_obj_t *kb=lv_keyboard_create(modal);lv_obj_set_pos(kb,14,210);lv_obj_set_size(kb,592,260);lv_keyboard_set_textarea(kb,name_edit);
+    lv_obj_t *kb=lv_keyboard_create(modal);lv_obj_set_align(kb,LV_ALIGN_TOP_LEFT);lv_obj_set_style_text_font(kb,&radio_font_20,0);lv_obj_set_style_text_font(kb,&radio_font_20,LV_PART_ITEMS);lv_obj_set_pos(kb,14,210);lv_obj_set_size(kb,592,260);lv_keyboard_set_textarea(kb,name_edit);
     lv_obj_add_event_cb(kb,preset_commit,LV_EVENT_READY,NULL);lv_obj_add_event_cb(kb,close_event,LV_EVENT_CANCEL,NULL);lv_group_focus_obj(name_edit);
 }
 static void refresh_presets(void) {
@@ -180,15 +186,41 @@ static void show_hardware(lv_event_t *e) {
     (void)e;make_modal("接收硬件设置",700,620);
     label(modal,"输入方式",24,84,MUTED);input_select=lv_dropdown_create(modal);lv_obj_set_pos(input_select,210,74);lv_obj_set_size(input_select,456,50);
     lv_dropdown_set_options(input_select,"常规调谐（约 24 MHz 起）\n直采 Q（需要硬件支持）\n上变频器（设置频移）");lv_dropdown_set_selected(input_select,cfg.input);dropdown_style(input_select);
-    label(modal,"上变频频移 MHz",24,158,MUTED);offset_edit=lv_textarea_create(modal);lv_obj_set_pos(offset_edit,270,144);lv_obj_set_size(offset_edit,396,50);lv_textarea_set_one_line(offset_edit,true);lv_textarea_set_accepted_chars(offset_edit,"0123456789.");
+    label(modal,"上变频频移 MHz",24,158,MUTED);offset_edit=lv_textarea_create(modal);lv_obj_set_style_text_font(offset_edit,&radio_font_20,0);lv_obj_set_pos(offset_edit,270,144);lv_obj_set_size(offset_edit,396,50);lv_textarea_set_one_line(offset_edit,true);lv_textarea_set_accepted_chars(offset_edit,"0123456789.");
     char t[32];snprintf(t,sizeof(t),"%.3f",cfg.offset_hz/1000000.0);lv_textarea_set_text(offset_edit,t);
-    label(modal,"频率校准 ppm",24,232,MUTED);ppm_edit=lv_textarea_create(modal);lv_obj_set_pos(ppm_edit,270,218);lv_obj_set_size(ppm_edit,396,50);lv_textarea_set_one_line(ppm_edit,true);lv_textarea_set_accepted_chars(ppm_edit,"-0123456789");snprintf(t,sizeof(t),"%d",cfg.ppm);lv_textarea_set_text(ppm_edit,t);
+    label(modal,"频率校准 ppm",24,232,MUTED);ppm_edit=lv_textarea_create(modal);lv_obj_set_style_text_font(ppm_edit,&radio_font_20,0);lv_obj_set_pos(ppm_edit,270,218);lv_obj_set_size(ppm_edit,396,50);lv_textarea_set_one_line(ppm_edit,true);lv_textarea_set_accepted_chars(ppm_edit,"-0123456789");snprintf(t,sizeof(t),"%d",cfg.ppm);lv_textarea_set_text(ppm_edit,t);
     label(modal,"射频增益",24,308,MUTED);gain_select=lv_dropdown_create(modal);lv_obj_set_pos(gain_select,270,294);lv_obj_set_size(gain_select,396,50);
     lv_dropdown_set_options(gain_select,"自动增益\n0 dB\n12.5 dB\n19.7 dB\n25.4 dB\n28.0 dB\n32.8 dB\n37.2 dB\n40.2 dB\n43.9 dB\n49.6 dB");
     for(unsigned i=0;i<sizeof(gains)/sizeof(gains[0]);i++)if(gains[i]==cfg.rf_gain)lv_dropdown_set_selected(gain_select,i);
     dropdown_style(gain_select);
     lv_obj_t *help=label(modal,"普通 R820T 接收棒不能仅靠软件接收低频短波。\n直采需要硬件支持；上变频频移请按设备规格填写。\n直采模式建议用于 28.8 MHz 以下。\n增益过高可能失真，可先尝试 25.4 dB。",24,374,MUTED);lv_obj_set_width(help,646);
     button(modal,"保存设置",24,510,200,48,true,hardware_commit,NULL);
+}
+static void label_changed(lv_obj_t *o,const char *text) {
+    if(strcmp(lv_label_get_text(o),text))lv_label_set_text(o,text);
+}
+static void update_rds(void) {
+    rds_info info={0};if(!demo)engine_rds_snapshot(&engine,&info);
+    if(cfg.mode!=MODE_WFM)info.state=RDS_NOT_FM;
+    else if(!active)info.state=RDS_IDLE;
+    const char *name="RDS 待机",*text="开始 FM 接收后自动检测电台信息";
+    char meta[320]="";
+    switch(info.state) {
+    case RDS_NOT_FM:name="RDS 仅用于 FM 广播";text="当前接收模式不携带 RDS 信息";break;
+    case RDS_WAITING:name="正在检测 RDS…";text="等待电台发送名称和节目文字";break;
+    case RDS_NO_SIGNAL:name="未检测到 RDS";text="电台可能未发送数据，或当前信号较弱";break;
+    case RDS_LOCKED:
+    case RDS_STALE:
+        name=info.ps[0]?info.ps:"RDS 已锁定";
+        text=info.text[0]?info.text:"正在等待节目文字";
+        snprintf(meta,sizeof(meta),"PI %s  ·  %s  ·  %s",info.pi,info.program_type[0]?info.program_type:"节目类型待接收",info.state==RDS_STALE?"RDS 信号暂失":"RDS 数据正常");break;
+    case RDS_UNAVAILABLE:name="RDS 解码器不可用";text="可以继续收听广播";break;
+    case RDS_ERROR:name="RDS 解码中断";text="请重新开始接收以重试；广播音频可继续播放";break;
+    default:break;
+    }
+    label_changed(rds_name_label,name);label_changed(rds_text_label,text);label_changed(rds_meta_label,meta);
+    static unsigned old_color=0;unsigned color=info.state==RDS_LOCKED?TEAL:INK;
+    if(color!=old_color){lv_obj_set_style_text_color(rds_name_label,lv_color_hex(color),0);old_color=color;}
 }
 static void update(lv_timer_t *timer) {
     (void)timer;bool receiving=false;float level=0;char message[256]="准备就绪";
@@ -197,6 +229,7 @@ static void update(lv_timer_t *timer) {
     if(ui_play_state!=active || !lv_label_get_text(play_label)[0]) {
         ui_play_state=active;lv_label_set_text(play_label,active?"停止接收":"开始接收");lv_obj_center(play_label);
     }
+    update_rds();
     char s[256];snprintf(s,sizeof(s),"%s",(int32_t)(notice_until-lv_tick_get())>0?notice:message);
     if(strcmp(lv_label_get_text(status_label),s))lv_label_set_text(status_label,s);
     float db=level>0?20*log10f(level):-90;int amount=(int)((db+60)*100/60);if(amount<0)amount=0;if(amount>100)amount=100;
@@ -209,9 +242,9 @@ static void create_ui(void) {
     root=lv_screen_active();lv_obj_set_style_bg_color(root,lv_color_hex(BG),0);lv_obj_set_style_text_font(root,&radio_font_20,0);lv_obj_set_style_text_color(root,lv_color_hex(INK),0);lv_obj_set_scrollable(root,false);
     label(root,"N1 收音机",24,24,INK);label(root,"RTL-SDR   /   LVGL",200,27,MUTED);clock_label=label(root,"",938,26,MUTED);
     button(root,"接收设置",774,17,140,45,false,show_hardware,NULL);
-    lv_obj_t *side=panel(root,24,88,242,532,CARD);label(side,"收藏电台",16,18,INK);label(side,"PRESETS",16,50,MUTED);
+    lv_obj_t *side=panel(root,24,88,242,652,CARD);label(side,"收藏电台",16,18,INK);label(side,"PRESETS",16,50,MUTED);
     button(side,"+ 收藏当前",14,95,214,44,false,show_preset,NULL);
-    preset_list=panel(side,16,156,214,360,CARD);lv_obj_set_scrollable(preset_list,true);lv_obj_set_scroll_dir(preset_list,LV_DIR_VER);
+    preset_list=panel(side,16,156,214,480,CARD);lv_obj_set_scrollable(preset_list,true);lv_obj_set_scroll_dir(preset_list,LV_DIR_VER);
     lv_obj_t *tuner=panel(root,286,88,730,340,CARD);
     band_label=label(tuner,band,24,20,TEAL);input_label=label(tuner,"",450,20,MUTED);
     lv_obj_t *frequency=button(tuner,"",24,65,548,112,false,show_frequency,NULL);lv_obj_set_style_bg_color(frequency,lv_color_hex(CARD),0);lv_obj_set_style_border_width(frequency,0,0);
@@ -221,15 +254,19 @@ static void create_ui(void) {
     lv_obj_t *step=lv_dropdown_create(tuner);step_select=step;lv_obj_set_pos(step,201,207);lv_obj_set_size(step,164,54);lv_dropdown_set_options(step,"100 Hz\n1 kHz\n10 kHz\n100 kHz\n1 MHz");current_step=cfg.mode==MODE_WFM?3:1;lv_dropdown_set_selected(step,current_step);lv_obj_add_event_cb(step,step_change,LV_EVENT_VALUE_CHANGED,NULL);dropdown_style(step);
     mode_select=lv_dropdown_create(tuner);lv_obj_set_pos(mode_select,386,207);lv_obj_set_size(mode_select,142,54);lv_dropdown_set_options(mode_select,"FM\nAM\nUSB\nLSB\nNFM");lv_obj_add_event_cb(mode_select,mode_change,LV_EVENT_VALUE_CHANGED,NULL);dropdown_style(mode_select);
     label(tuner,"点击频率可直接输入",24,291,MUTED);label(tuner,"模式",548,221,MUTED);
-    lv_obj_t *bands=panel(root,286,444,730,62,BG);const char *bands_text[]={"FM 广播","中波 AM","短波","VHF"};
+    lv_obj_t *rds_panel=panel(root,286,444,730,112,CARD);
+    label(rds_panel,"RDS",18,12,TEAL);rds_name_label=label(rds_panel,"RDS 待机",84,12,INK);lv_obj_set_width(rds_name_label,622);lv_label_set_long_mode(rds_name_label,LV_LABEL_LONG_DOT);
+    rds_text_label=label(rds_panel,"开始 FM 接收后自动检测电台信息",18,47,MUTED);lv_obj_set_size(rds_text_label,694,28);lv_label_set_long_mode(rds_text_label,LV_LABEL_LONG_SCROLL_CIRCULAR);
+    rds_meta_label=label(rds_panel,"",18,82,MUTED);lv_obj_set_width(rds_meta_label,694);lv_label_set_long_mode(rds_meta_label,LV_LABEL_LONG_DOT);
+    lv_obj_t *bands=panel(root,286,572,730,62,BG);const char *bands_text[]={"FM 广播","中波 AM","短波","VHF"};
     for(int i=0;i<4;i++)button(bands,bands_text[i],i*187,0,169,52,false,band_click,(void*)(intptr_t)i);
-    lv_obj_t *audio=panel(root,286,520,730,100,CARD);
+    lv_obj_t *audio=panel(root,286,640,730,100,CARD);
     play_button=button(audio,"",18,22,166,54,true,play_click,NULL);play_label=lv_obj_get_child(play_button,0);
     lv_obj_t *mute=button(audio,"静音",200,22,110,54,false,mute_click,NULL);mute_label=lv_obj_get_child(mute,0);
     volume_slider=lv_slider_create(audio);lv_obj_set_pos(volume_slider,340,37);lv_obj_set_size(volume_slider,216,16);lv_slider_set_range(volume_slider,0,100);lv_slider_set_value(volume_slider,cfg.volume,LV_ANIM_OFF);lv_obj_set_style_bg_color(volume_slider,lv_color_hex(TEAL),LV_PART_INDICATOR);lv_obj_set_style_bg_color(volume_slider,lv_color_hex(TEAL),LV_PART_KNOB);lv_obj_add_event_cb(volume_slider,volume_change,LV_EVENT_VALUE_CHANGED,NULL);lv_obj_add_event_cb(volume_slider,volume_save,LV_EVENT_RELEASED,NULL);
     char text[24];snprintf(text,sizeof(text),"%d%%",cfg.volume);volume_label=label(audio,text,584,31,INK);
-    hardware_label=label(root,"",24,640,MUTED);lv_obj_set_width(hardware_label,430);
-    status_label=label(root,"准备就绪",478,640,TEAL);lv_obj_set_width(status_label,538);lv_label_set_long_mode(status_label,LV_LABEL_LONG_DOT);
+    hardware_label=label(root,"",24,760,MUTED);lv_obj_set_width(hardware_label,430);
+    status_label=label(root,"准备就绪",478,760,TEAL);lv_obj_set_width(status_label,538);lv_label_set_long_mode(status_label,LV_LABEL_LONG_DOT);
     // Audio level is intentionally not labelled RF signal strength.
     meter=lv_bar_create(tuner);lv_obj_set_pos(meter,550,281);lv_obj_set_size(meter,152,8);lv_bar_set_range(meter,0,100);lv_obj_set_style_bg_color(meter,lv_color_hex(TEAL),LV_PART_INDICATOR);
     meter_label=label(tuner,"音频电平  --",476,301,MUTED);
@@ -238,9 +275,10 @@ static void create_ui(void) {
 static void cleanup(void) {if(cleaned)return;cleaned=true;if(initialized){engine_destroy(&engine);initialized=false;}save();}
 static void signal_exit(int sig){(void)sig;exiting=1;}
 int main(int argc,char **argv) {
-    int exit_after=0;bool start_receiving=false;for(int i=1;i<argc;i++) {
+    int exit_after=0;const char *preview_popup=NULL;bool start_receiving=false;for(int i=1;i<argc;i++) {
         if(!strcmp(argv[i],"--demo"))demo=true;
         else if(!strcmp(argv[i],"--start"))start_receiving=true;
+        else if(!strcmp(argv[i],"--preview-popup")&&i+1<argc)preview_popup=argv[++i];
         else if(!strcmp(argv[i],"--audio-diagnostics"))setenv("N1_RADIO_DEBUG","1",1);
         else if(!strcmp(argv[i],"--exit-after")&&i+1<argc)exit_after=atoi(argv[++i]);
         else if(!strcmp(argv[i],"--help")){puts("N1 Radio --demo --start --audio-diagnostics --exit-after SECONDS\nLVGL RTL-SDR receiver: FM / AM / USB / LSB / NFM");return 0;}
@@ -255,12 +293,17 @@ int main(int argc,char **argv) {
     signal(SIGINT,signal_exit);signal(SIGTERM,signal_exit);signal(SIGPIPE,SIG_IGN);
     if(!demo){if(!engine_init(&engine,&cfg)){fputs("Cannot start receiver thread\n",stderr);return 1;}initialized=true;}
     atexit(cleanup);lv_init();
-    lv_display_t *display=lv_sdl_window_create(1040,680);if(!display)return 1;
+    lv_display_t *display=lv_sdl_window_create(WINDOW_WIDTH,WINDOW_HEIGHT);if(!display)return 1;
+    lv_sdl_window_set_zoom(display,0.5f);
+    SDL_SetWindowPosition(lv_sdl_window_get_window(display),SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED);
     lv_sdl_window_set_title(display,"N1 Radio / LVGL");lv_sdl_window_set_resizeable(display,false);
     lv_group_t *group=lv_group_create();lv_group_set_default(group);
     lv_indev_t *mouse=lv_sdl_mouse_create();lv_indev_set_display(mouse,display);
     lv_indev_t *keyboard=lv_sdl_keyboard_create();lv_indev_set_group(keyboard,group);
-    create_ui();if(start_receiving){char error[256];if(radio_validate(&cfg,error,sizeof(error))){active=true;if(!demo)engine_apply(&engine,&cfg,true);}else tell(error);}
+    create_ui();if(demo && preview_popup){if(!strcmp(preview_popup,"settings"))show_hardware(NULL);else if(!strcmp(preview_popup,"preset"))show_preset(NULL);else if(!strcmp(preview_popup,"frequency"))show_frequency(NULL);}
+    if(start_receiving){char error[256];if(radio_validate(&cfg,error,sizeof(error))){active=true;if(!demo)engine_apply(&engine,&cfg,true);}else tell(error);}
+    lv_refr_now(display);
+    SDL_ShowWindow(lv_sdl_window_get_window(display));
     uint32_t start=lv_tick_get();
     while(!exiting && lv_display_get_default()) {lv_timer_handler();if(exit_after>0 && lv_tick_get()-start>(uint32_t)exit_after*1000)break;usleep(10000);}
     cleanup();lv_deinit();return 0;

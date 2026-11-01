@@ -52,7 +52,7 @@ static pid_t start_child(const radio_config *c, int *audio, int *errors) {
         // Explicit wide FM avoids rtl_fm's wbfm alias, which shifts tuning by
         // 16 kHz and defaults to only 170 kHz (insufficient deviation margin).
         argv[n++]="-s";argv[n++]="240000";argv[n++]="-A";argv[n++]="std";
-        argv[n++]="-F";argv[n++]="9";argv[n++]="-E";argv[n++]="deemp";
+        argv[n++]="-F";argv[n++]="9";
     }
     if(c->mode!=MODE_WFM){argv[n++]="-s";argv[n++]="24000";}
     argv[n++]="-r";argv[n++]=rate;argv[n++]="-E";argv[n++]="dc";
@@ -71,6 +71,15 @@ static pid_t start_child(const radio_config *c, int *audio, int *errors) {
     fcntl(err[0],F_SETFL,fcntl(err[0],F_GETFL)|O_NONBLOCK);
     *audio=out[0];*errors=err[0];return pid;
 }
+static void publish_rds(radio_engine *e,const rds_info *info,unsigned generation) {
+    pthread_mutex_lock(&e->lock);
+    if(e->generation==generation){
+        if(getenv("N1_RADIO_DEBUG") && (e->rds.state!=info->state || strcmp(e->rds.pi,info->pi) || strcmp(e->rds.ps,info->ps) || strlen(e->rds.text)!=strlen(info->text)))
+            fprintf(stderr,"rds: state=%d groups=%llu PI=%s PS=%s text_bytes=%zu\n",info->state,(unsigned long long)info->groups,info->pi,info->ps,strlen(info->text));
+        e->rds=*info;
+    }
+    pthread_mutex_unlock(&e->lock);
+}
 static void receive(radio_engine *e, radio_config *c, unsigned generation) {
     char invalid[256];if(!radio_validate(c,invalid,sizeof(invalid))){status(e,invalid,false);return;}
     status(e,"正在打开接收器…",false);
@@ -80,8 +89,16 @@ static void receive(radio_engine *e, radio_config *c, unsigned generation) {
     int error=0;pa_simple *pa=pa_simple_new(NULL,"N1 Radio",PA_STREAM_PLAYBACK,NULL,"Radio audio",&spec,NULL,NULL,&error);
     if(!pa){stop_child(pid,audio,errors);close(audio);close(errors);status(e,"无法连接音频服务，请检查声音输出",false);return;}
     _Alignas(int16_t) unsigned char bytes[4097];size_t carry=0;char log[4096]={0};size_t used=0;bool failed=false,playing=false;fm_resampler fm;fm_resampler_init(&fm);
+    rds_decoder *rds=NULL;
+    if(c->mode==MODE_WFM){
+        fm_resampler_enable_deemphasis(&fm);
+        rds=calloc(1,sizeof(*rds));
+        if(rds){rds_decoder_start(rds,FM_INPUT_RATE);publish_rds(e,&rds->info,generation);}
+        else {rds_info unavailable={.state=RDS_UNAVAILABLE};publish_rds(e,&unavailable,generation);}
+    }
     unsigned debug_frames=0;bool diagnostics=getenv("N1_RADIO_DEBUG")!=NULL;
     while(!changed(e,generation)) {
+        if(rds){rds_decoder_poll(rds);publish_rds(e,&rds->info,generation);}
         struct pollfd fds[2]={{audio,POLLIN,0},{errors,POLLIN,0}};
         int r=poll(fds,2,100);if(r<0){if(errno==EINTR)continue;failed=true;break;}
         if(fds[1].revents&POLLIN) {
@@ -96,6 +113,7 @@ static void receive(radio_engine *e, radio_config *c, unsigned generation) {
             bool mute;int volume;
             pthread_mutex_lock(&e->lock);mute=e->config.mute;volume=e->config.volume;pthread_mutex_unlock(&e->lock);
             int16_t raw_samples[2048],processed[2048];memcpy(raw_samples,bytes,even);
+            if(rds){rds_decoder_push(rds,raw_samples,even);publish_rds(e,&rds->info,generation);}
             size_t sample_count=even/2;
             carry=count-even;if(carry)bytes[0]=bytes[even];
             if(c->mode==MODE_WFM)sample_count=fm_resampler_process(&fm,raw_samples,sample_count,processed,2048);
@@ -111,6 +129,7 @@ static void receive(radio_engine *e, radio_config *c, unsigned generation) {
             if(!playing){status(e,"正在接收",true);playing=true;}
         }
     }
+    if(rds){rds_decoder_stop(rds);free(rds);}
     pa_simple_flush(pa,NULL);pa_simple_free(pa);stop_child(pid,audio,errors);close(audio);close(errors);
     if(failed && !changed(e,generation)) {
         if(strstr(log,"-6")||strstr(log,"busy")||strstr(log,"claim"))status(e,"接收器被占用，请先退出 Gqrx 或其他收音机",false);
@@ -144,13 +163,16 @@ bool engine_init(radio_engine *e, const radio_config *c) {
 void engine_apply(radio_engine *e,const radio_config *c,bool active) {
     pthread_mutex_lock(&e->lock);
     bool retune=e->active!=active || e->config.hz!=c->hz || e->config.mode!=c->mode || e->config.input!=c->input || e->config.offset_hz!=c->offset_hz || e->config.ppm!=c->ppm || e->config.rf_gain!=c->rf_gain;
-    if(retune){e->generation++;e->receiving=false;e->audio_level=0;}
+    if(retune){e->generation++;e->receiving=false;e->audio_level=0;memset(&e->rds,0,sizeof(e->rds));e->rds.state=active?(c->mode==MODE_WFM?RDS_WAITING:RDS_NOT_FM):RDS_IDLE;}
     // Permit a retry after a failed start even if tuning parameters did not change.
     if(active && !e->active)e->generation++;
     e->config=*c;e->active=active;pthread_mutex_unlock(&e->lock);
 }
 void engine_snapshot(radio_engine *e,bool *active,bool *receiving,char *message,unsigned size,float *level) {
     pthread_mutex_lock(&e->lock);*active=e->active;*receiving=e->receiving;*level=e->audio_level;snprintf(message,size,"%s",e->message);pthread_mutex_unlock(&e->lock);
+}
+void engine_rds_snapshot(radio_engine *e,rds_info *info) {
+    pthread_mutex_lock(&e->lock);*info=e->rds;pthread_mutex_unlock(&e->lock);
 }
 void engine_destroy(radio_engine *e) {
     pthread_mutex_lock(&e->lock);e->quit=true;e->generation++;pthread_mutex_unlock(&e->lock);pthread_join(e->thread,NULL);pthread_mutex_destroy(&e->lock);

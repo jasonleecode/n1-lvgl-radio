@@ -1,5 +1,5 @@
 {
-  "application_version": "0.1.0",
+  "application_version": "0.2.0",
   "architecture": "aarch64",
   "lvgl_commit": "58ae125776675b7dbbd2773ae06f02bc30fdde5d",
   "lvgl_version": "10.0.0-dev",
@@ -9,7 +9,10 @@
     "release_receiver_lifecycle": "passed",
     "ASan_UBSan_config": "passed",
     "ASan_UBSan_receiver_lifecycle": "passed",
-    "FM_DSP": "passed in release and ASan/UBSan"
+    "FM_DSP": "passed in release and ASan/UBSan",
+    "RDS_metadata_lifecycle": "passed in release and ASan/UBSan",
+    "FM_audio_deemphasis": "75us response within 1% of reference",
+    "hidden_window_startup": "passed in release and ASan/UBSan"
   },
   "hardware": {
     "chip": "RTL2838",
@@ -27,16 +30,24 @@
     "final_continuous_PCM_samples_per_second": 47838
   },
   "ui": {
-    "actual_render_size": [
+    "logical_size": [
       1040,
-      680
+      800
     ],
-    "Chinese_font": "Noto CJK SC common Chinese",
-    "preview": "rendered on N1/Xvfb"
+    "window_pixels": [
+      520,
+      400
+    ],
+    "scale": 0.5,
+    "mouse_coordinates": "SDL driver divides physical coordinates by zoom",
+    "popup_fonts": "Explicit common-Chinese fonts on top layer, labels, inputs and dropdowns",
+    "popup_previews": "Actual N1/Xvfb main, settings and presets rendered successfully",
+    "startup_mapping_test": "N1/Xvfb MapNotify observer: first and every visible window was already 520x400",
+    "popup_keyboard": "Explicit top-left alignment; full keyboard visible in actual preview"
   },
-  "binary_sha256": "fd794c3bdb9fc901b404d97bcfb17e497c2cf96fdacf187238b77252890e613c",
-  "user_acceptance": "PASSED: user confirmed distortion disappeared, overall tests OK, authorized GitHub upload",
-  "GitHub_upload": "Authorized after user acceptance",
+  "binary_sha256": "5b47659db88da416ab509dc7b37c59feceebf406a913c9aee4ff2ee40dfabcd2",
+  "user_acceptance": "PASSED: user confirmed compact UI, Chinese popups, keyboard, controls, listening and no startup size flash",
+  "GitHub_upload": "Authorized by user for v0.2.0",
   "GitHub_visibility": "public",
   "GitHub_repository": "jasonleecode/n1-lvgl-radio",
   "FM_quality": {
@@ -57,10 +68,24 @@
     "user_confirmed_sound": true
   },
   "memory": {
-    "application_scope_MiB": 44.0,
+    "application_scope_MiB": 45.1,
     "scope_limit_MiB": 256,
     "scope_swap_limit_MiB": 32,
     "limit_or_OOM_events": 0,
     "CPU_temperature_C": 57
+  },
+  "RDS": {
+    "decoder": "redsea 1.3.1",
+    "decoder_commit": "4cc27df9939798e800c4ff7cb484be6d9bf68b4d",
+    "MPX_input_rate": 240000,
+    "reference_fixture_sha256": "c92b9c72f132e37cbe253a19a6ae17c52f17f5318672c391ce7f3b9657320eb1",
+    "N1_reference_result": {
+      "groups": 3,
+      "pi": "0x6201",
+      "program_type": "Serious classical"
+    },
+    "live_97_4MHz": "No valid RDS groups detected so far; no claim that broadcaster sends RDS",
+    "failure_handling": "Bounded queue and JSON lines; unavailable/failed decoder does not stop radio",
+    "decoder_binary_sha256": "b627f6713dc842dd1e8df8e6c2e5bdf07bad6cfdfb0ccd31f07bd926c03c7b7d"
   }
 }

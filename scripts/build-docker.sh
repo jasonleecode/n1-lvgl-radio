@@ -13,4 +13,7 @@ docker run --platform linux/arm64 --name "n1-radio-build-$(date +%s)" \
         cmake --build /out/cmake -j3
         ctest --test-dir /out/cmake --output-on-failure
         cp /out/cmake/n1-radio /out/n1-radio
+        sh /src/scripts/build-redsea.sh /out/deps
+        cp /out/deps/redsea /out/redsea
+        cp /out/deps/REDSEA-LICENSE.txt /out/REDSEA-LICENSE.txt
     '
