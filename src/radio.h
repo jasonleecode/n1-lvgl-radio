@@ -15,7 +15,7 @@ typedef struct { int64_t hz; radio_mode mode; char name[STATION_NAME]; } station
 typedef struct {
     int64_t hz, offset_hz;
     int volume, ppm;
-    bool mute;
+    bool mute, fm_mono;
     radio_mode mode;
     radio_input input;
     station stations[MAX_STATIONS];
@@ -32,6 +32,8 @@ typedef struct {
     char message[256];
     uint64_t audio_samples, tuning_requested_ms;
     rds_info rds;
+    bool pilot_locked;
+    float stereo_blend,pilot_amplitude;
 } radio_engine;
 
 void config_defaults(radio_config *c);

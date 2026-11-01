@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Control the current user's GUI or headless N1 radio over a private Unix socket."""
+import argparse
+from decimal import Decimal, InvalidOperation
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import time
+
+
+def frequency(text):
+    units = {'hz': 1, 'khz': 1000, 'mhz': 1000000, 'k': 1000, 'm': 1000000}
+    text = text.strip().lower()
+    multiplier = 1000000  # Bare numbers are MHz, matching the desktop.
+    for suffix in ('mhz', 'khz', 'hz', 'm', 'k'):
+        if text.endswith(suffix):
+            multiplier = units[suffix]
+            text = text[:-len(suffix)]
+            break
+    try:
+        hz = Decimal(text) * multiplier
+        if not hz.is_finite() or hz != hz.to_integral_value() or abs(hz) > 1766000000:
+            raise ValueError
+        return int(hz)
+    except (InvalidOperation, ValueError, OverflowError):
+        raise argparse.ArgumentTypeError('频率示例：97.4、97.4M、97400k、97400000Hz')
+
+
+def endpoint():
+    runtime = os.environ.get('XDG_RUNTIME_DIR')
+    standard = Path(f'/run/user/{os.getuid()}')
+    if not runtime and os.access(standard, os.W_OK):
+        runtime = str(standard)
+    return Path(runtime, 'n1-radio', 'control.sock') if runtime else Path(f'/tmp/n1-radio-{os.getuid()}/control.sock')
+
+
+def request(payload):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as s:
+        s.settimeout(4)
+        s.connect(str(endpoint()))
+        s.sendall(json.dumps(payload, separators=(',', ':')).encode())
+        data = s.recv(16384)
+        if not data:
+            raise RuntimeError('收音机未返回响应')
+        return json.loads(data)
+
+
+def spawn():
+    logdir = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'n1-radio'
+    logdir.mkdir(parents=True, exist_ok=True)
+    with (logdir / 'headless.log').open('ab') as log:
+        subprocess.Popen(['/usr/local/bin/n1-radio', '--headless'], stdin=subprocess.DEVNULL,
+                         stdout=log, stderr=log, start_new_session=True)
+    for _ in range(100):
+        try:
+            request({'command': 'status'})
+            return
+        except (FileNotFoundError, ConnectionRefusedError):
+            time.sleep(.05)
+    raise RuntimeError(f'后台启动失败，请查看 {logdir / "headless.log"}')
+
+
+def main():
+    p = argparse.ArgumentParser(description='控制桌面或后台收音机。无需 sudo；裸频率单位为 MHz。')
+    p.add_argument('--json', action='store_true', help='输出 JSON，适合脚本')
+    sub = p.add_subparsers(dest='command', required=True)
+    for cmd, help_text in [('status', '查询频率、接收状态和 RDS'), ('start', '开始收听；未运行时启动后台模式'),
+                           ('stop', '停止接收'), ('quit', '退出收音机（包括桌面窗口）'),
+                           ('daemon', '启动无窗口后台模式'), ('presets', '列出收藏电台')]:
+        sub.add_parser(cmd, help=help_text)
+    tune = sub.add_parser('tune', help='调台并开始收听，例如 tune 97.4')
+    tune.add_argument('frequency', type=frequency)
+    tune.add_argument('--mode', type=str.upper, choices=['FM', 'AM', 'USB', 'LSB', 'NFM'])
+    step = sub.add_parser('step', help='相对调台，例如 step 100k 或 step -- -100k')
+    step.add_argument('frequency', type=frequency)
+    mode = sub.add_parser('mode', help='设置解调模式')
+    mode.add_argument('value', type=str.upper, choices=['FM', 'AM', 'USB', 'LSB', 'NFM'])
+    volume = sub.add_parser('volume', help='音量 0～100')
+    volume.add_argument('value', type=int, choices=range(101), metavar='0..100')
+    mute = sub.add_parser('mute', help='静音开关')
+    mute.add_argument('value', choices=['on', 'off'])
+    stereo = sub.add_parser('stereo', help='FM 自动立体声或强制单声道')
+    stereo.add_argument('value', choices=['auto', 'mono'])
+    preset = sub.add_parser('preset', help='播放指定收藏编号')
+    preset.add_argument('value', type=int)
+    a = p.parse_args()
+    payload = {'command': a.command}
+    if a.command in ('tune', 'step'):
+        payload['value'] = a.frequency
+        if a.command == 'tune' and a.mode:
+            payload['mode'] = a.mode
+    elif hasattr(a, 'value'):
+        payload['value'] = a.value == 'on' if a.command == 'mute' else a.value
+    try:
+        try:
+            result = request({'command': 'status'} if a.command == 'daemon' else payload)
+        except (FileNotFoundError, ConnectionRefusedError):
+            if a.command not in ('start', 'tune', 'preset', 'daemon'):
+                raise RuntimeError('收音机未运行。请先执行 n1-radioctl start 或打开桌面收音机。')
+            spawn()
+            result = request({'command': 'status'} if a.command == 'daemon' else payload)
+        if a.command == 'quit' and result['ok']:
+            for _ in range(160):
+                if not endpoint().exists():
+                    break
+                time.sleep(.05)
+            else:
+                raise RuntimeError('已请求退出，但设备清理尚未完成，请稍后查询状态')
+        if a.json:
+            print(json.dumps(result, ensure_ascii=False))
+        elif a.command in ('status', 'daemon') and result['ok']:
+            print(f"{result['frequency_hz']/1e6:g} MHz / {result['mode']} / 音量 {result['volume']}% / 静音 {'开' if result['mute'] else '关'}")
+            print(result['message'])
+            if result['mode'] == 'FM':
+                print(f"FM {'STEREO' if result['stereo'] else 'MONO'} / 19kHz 导频 {'已锁定' if result['pilot_locked'] else '未锁定'} / {result['stereo_mode']}")
+            if result['rds']['ps'] or result['rds']['text']:
+                print(result['rds']['ps'], result['rds']['text'])
+        elif a.command == 'presets' and result['ok']:
+            for item in result['presets']:
+                print(f"{item['number']}. {item['name']}  {item['frequency_hz']/1e6:g} MHz / {item['mode']}")
+        else:
+            print(result.get('message', 'OK'))
+        return 0 if result['ok'] else 1
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f'n1-radioctl: {error}', file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

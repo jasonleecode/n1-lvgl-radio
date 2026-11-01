@@ -24,7 +24,7 @@ extern char **environ;
 
 static void status(radio_engine *e, const char *s, bool live) {
     pthread_mutex_lock(&e->lock);snprintf(e->message,sizeof(e->message),"%s",s);e->receiving=live;
-    if(!live)e->audio_level=0;
+    if(!live){e->audio_level=0;e->pilot_locked=false;e->stereo_blend=0;e->pilot_amplitude=0;}
     pthread_mutex_unlock(&e->lock);
 }
 static bool changed(radio_engine *e, unsigned gen) {
@@ -104,13 +104,12 @@ static void receive(radio_engine *e, radio_config *c, unsigned generation) {
     uint64_t started=monotonic_ms();
     int audio=-1,errors=-1;pid_t pid=start_child(c,&audio,&errors);
     if(pid<0){status(e,"无法启动 rtl_fm，请检查程序是否已安装",false);return;}
-    pa_sample_spec spec={.format=PA_SAMPLE_S16LE,.rate=(uint32_t)radio_sample_rate(c->mode),.channels=1};
+    pa_sample_spec spec={.format=PA_SAMPLE_S16LE,.rate=(uint32_t)radio_sample_rate(c->mode),.channels=c->mode==MODE_WFM?2:1};
     int error=0;pa_simple *pa=pa_simple_new(NULL,"N1 Radio",PA_STREAM_PLAYBACK,NULL,"Radio audio",&spec,NULL,NULL,&error);
     if(!pa){stop_child(pid,audio,errors,started);close(audio);close(errors);status(e,"无法连接音频服务，请检查声音输出",false);return;}
-    _Alignas(int16_t) unsigned char bytes[4097];size_t carry=0;char log[4096]={0};size_t used=0;bool failed=false,playing=false;fm_resampler fm;fm_resampler_init(&fm);
+    _Alignas(int16_t) unsigned char bytes[4097];size_t carry=0;char log[4096]={0};size_t used=0;bool failed=false,playing=false;fm_stereo fm;fm_stereo_init(&fm);
     rds_decoder *rds=NULL;
     if(c->mode==MODE_WFM){
-        fm_resampler_enable_deemphasis(&fm);
         rds=calloc(1,sizeof(*rds));
         if(rds){rds_decoder_start(rds,FM_INPUT_RATE);publish_rds(e,&rds->info,generation);}
         else {rds_info unavailable={.state=RDS_UNAVAILABLE};publish_rds(e,&unavailable,generation);}
@@ -130,22 +129,23 @@ static void receive(radio_engine *e, radio_config *c, unsigned generation) {
             if(n<0){if(errno==EAGAIN||errno==EINTR)continue;failed=true;break;}
             started=0; // PCM proves USB initialization has completed.
             size_t count=(size_t)n+carry,even=count&~(size_t)1;
-            bool mute;int volume;
-            pthread_mutex_lock(&e->lock);mute=e->config.mute;volume=e->config.volume;pthread_mutex_unlock(&e->lock);
+            bool mute,force_mono;int volume;
+            pthread_mutex_lock(&e->lock);mute=e->config.mute;force_mono=e->config.fm_mono;volume=e->config.volume;pthread_mutex_unlock(&e->lock);
             int16_t raw_samples[2048],processed[2048];memcpy(raw_samples,bytes,even);
             if(rds){rds_decoder_push(rds,raw_samples,even);publish_rds(e,&rds->info,generation);}
             size_t sample_count=even/2;
             carry=count-even;if(carry)bytes[0]=bytes[even];
-            if(c->mode==MODE_WFM)sample_count=fm_resampler_process(&fm,raw_samples,sample_count,processed,2048);
+            if(c->mode==MODE_WFM)sample_count=fm_stereo_process(&fm,raw_samples,sample_count,processed,1024,force_mono);
             else memcpy(processed,raw_samples,even);
             if(!sample_count)continue;
+            size_t pcm_count=sample_count*spec.channels;
             int16_t *samples=processed;double sum=0;float gain=mute?0:(float)volume/100;
-            for(size_t i=0;i<sample_count;i++){float x=samples[i]/32768.0f;sum+=x*x;samples[i]=(int16_t)(samples[i]*gain);}
-            float level=sqrtf((float)(sum/sample_count));
+            for(size_t i=0;i<pcm_count;i++){float x=samples[i]/32768.0f;sum+=x*x;samples[i]=(int16_t)(samples[i]*gain);}
+            float level=sqrtf((float)(sum/pcm_count));
             if(diagnostics && debug_frames++<5)fprintf(stderr,"audio: raw_rms=%.5f gain=%.2f bytes=%zu\n",level,gain,even);
-            if(pa_simple_write(pa,processed,sample_count*sizeof(int16_t),&error)<0){snprintf(log,sizeof(log),"audio: %s",pa_strerror(error));failed=true;break;}
+            if(pa_simple_write(pa,processed,pcm_count*sizeof(int16_t),&error)<0){snprintf(log,sizeof(log),"audio: %s",pa_strerror(error));failed=true;break;}
             if(changed(e,generation))break;
-            pthread_mutex_lock(&e->lock);e->audio_level=level;e->audio_samples+=sample_count;pthread_mutex_unlock(&e->lock);
+            pthread_mutex_lock(&e->lock);e->audio_level=level;e->audio_samples+=sample_count;if(c->mode==MODE_WFM){e->pilot_locked=fm.locked;e->stereo_blend=fm.blend;e->pilot_amplitude=fm.pilot_amplitude;}pthread_mutex_unlock(&e->lock);
             if(!playing){status(e,"正在接收",true);playing=true;}
         }
     }
@@ -192,7 +192,7 @@ bool engine_init(radio_engine *e, const radio_config *c) {
 void engine_apply(radio_engine *e,const radio_config *c,bool active) {
     pthread_mutex_lock(&e->lock);
     bool retune=e->active!=active || e->config.hz!=c->hz || e->config.mode!=c->mode || e->config.input!=c->input || e->config.offset_hz!=c->offset_hz || e->config.ppm!=c->ppm || e->config.rf_gain!=c->rf_gain;
-    if(retune){e->tuning_requested_ms=monotonic_ms();e->generation++;e->receiving=false;e->audio_level=0;memset(&e->rds,0,sizeof(e->rds));e->rds.state=active?(c->mode==MODE_WFM?RDS_WAITING:RDS_NOT_FM):RDS_IDLE;}
+    if(retune){e->tuning_requested_ms=monotonic_ms();e->generation++;e->receiving=false;e->audio_level=0;e->pilot_locked=false;e->stereo_blend=0;e->pilot_amplitude=0;memset(&e->rds,0,sizeof(e->rds));e->rds.state=active?(c->mode==MODE_WFM?RDS_WAITING:RDS_NOT_FM):RDS_IDLE;}
     // Permit a retry after a failed start even if tuning parameters did not change.
     if(active && !e->active)e->generation++;
     e->config=*c;e->active=active;pthread_mutex_unlock(&e->lock);

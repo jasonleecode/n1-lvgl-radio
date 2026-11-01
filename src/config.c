@@ -52,6 +52,7 @@ void config_load(radio_config *c, const char *path) {
         if(!integer(eq,&v))continue;
         if(!strcmp(line,"frequency") && v>=RADIO_MIN_HZ && v<=RADIO_MAX_HZ)c->hz=v;
         else if(!strcmp(line,"volume") && v>=0 && v<=100)c->volume=(int)v;
+        else if(!strcmp(line,"fm_mono") && (v==0 || v==1))c->fm_mono=v;
         else if(!strcmp(line,"mode") && v>=0 && v<MODE_COUNT)c->mode=(radio_mode)v;
         else if(!strcmp(line,"input") && v>=0 && v<=INPUT_UPCONVERTER)c->input=(radio_input)v;
         else if(!strcmp(line,"offset") && v>=0 && v<=1000000000)c->offset_hz=v;
@@ -65,6 +66,7 @@ bool config_save(const radio_config *c, const char *path) {
     int fd=mkstemp(tmp);if(fd<0)return false;
     FILE *f=fdopen(fd,"w");if(!f){close(fd);unlink(tmp);return false;}
     fprintf(f,"# N1 Radio v1\nfrequency=%lld\nvolume=%d\nmode=%d\ninput=%d\noffset=%lld\nppm=%d\nrf_gain=%d\n",(long long)c->hz,c->volume,c->mode,c->input,(long long)c->offset_hz,c->ppm,c->rf_gain);
+    fprintf(f,"fm_mono=%d\n",c->fm_mono);
     for(int i=0;i<c->count && i<MAX_STATIONS;i++) {
         char name[STATION_NAME];snprintf(name,sizeof(name),"%s",c->stations[i].name);name[strcspn(name,"\r\n")]=0;
         fprintf(f,"station=%lld,%d,%s\n",(long long)c->stations[i].hz,c->stations[i].mode,name);

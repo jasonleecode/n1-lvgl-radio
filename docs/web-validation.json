@@ -1,0 +1,33 @@
+{
+  "feature": "LAN web player",
+  "implementation": "HTML/CSS/JS + Python standard-library HTTP server + isolated PulseAudio stream capture + shared MP3 encoder",
+  "url_path": "http://N1-IP:8090",
+  "format": {
+    "codec": "MP3",
+    "rate_hz": 48000,
+    "channels": 2,
+    "bitrate_bps": 128000
+  },
+  "N1_service": "enabled in n1 user session",
+  "tests": {
+    "two_simultaneous_listeners": "passed; both decode to nonzero 48kHz stereo PCM",
+    "one_shared_encoder": "confirmed in N1 process list",
+    "Chrome_browser_playback": "passed; currentTime advanced from 1.013 to 13.057 over 12s",
+    "playback_during_retune": "passed; currentTime advanced, no audio error, returned to 97.4MHz",
+    "mobile_390px": "no horizontal overflow, visually checked",
+    "desktop_1280px": "rendered",
+    "browser_page_errors": [],
+    "browser_local_stop": "passed; N1 remained receiving",
+    "service_memory_bytes_during_two_listeners": 24502272
+  },
+  "file_sha256": {
+    "scripts/n1-radio-web": "2440abd64d46a66ab1bfecc59f02cc42cec0be47009b60cd18e288f332d56b8d",
+    "scripts/n1-radio-web.service": "afdb941b52a46b86d74e33157a255b7bbfa5e5b15dc065b9ad2a4b0f52f224c8",
+    "web/index.html": "b9994c5ab6a16c552255c331a936ad60ba179c3ecbfe6fb8ed0ac87591eeed6b",
+    "web/style.css": "f8422b3704082a9c8aff2dd57798e53d3ffa3e9dcf3068079b7a114beaeb404b",
+    "web/app.js": "c53c5a13f9c0e639c278abf26d72b3b1361e838f434078bf13c50f646ebe47bc"
+  },
+  "user_acceptance": "Passed; user confirmed normal operation and authorized GitHub update",
+  "GitHub_upload": "Authorized by user",
+  "application_version": "0.3.0"
+}

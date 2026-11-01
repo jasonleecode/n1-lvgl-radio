@@ -1,0 +1,42 @@
+{
+  "feature": "Pilot-locked FM stereo and terminal control",
+  "binary_sha256": "52c2420ea19a859deaf917a1cb212244e2f8f2132cfe027c4211bbb49db5c3a0",
+  "build_host": "Mac ARM Docker",
+  "release_tests": "7/7 passed",
+  "ASan_UBSan_tests": "7/7 passed",
+  "synthetic_MPX": {
+    "left_only_separation_dB": 66.0,
+    "right_only_separation_dB": 66.0,
+    "pilot_frequency_error_hz_tested": [
+      -2,
+      0,
+      2
+    ],
+    "other_tests": [
+      "pilot loss to mono",
+      "pilot absent to mono",
+      "noise rejects false lock",
+      "forced mono",
+      "mono programme",
+      "streaming chunks bit identical"
+    ]
+  },
+  "N1_live_97_4MHz": {
+    "pilot_locked": true,
+    "stereo": true,
+    "PulseAudio_format": "s16le 2ch 48000Hz front-left,front-right",
+    "monitor_frames": 96000,
+    "left_RMS": 2227.42,
+    "right_RMS": 2123.55,
+    "L_minus_R_RMS": 1772.7,
+    "identical_channels": false,
+    "forced_mono_and_back": "passed",
+    "rapid_tune_recovery": "16 commands, returns to locked stereo",
+    "process_CPU_percent_of_one_core": 19,
+    "new_USB_errors": "none observed"
+  },
+  "user_acceptance": "Passed; user confirmed normal operation and authorized GitHub update",
+  "GitHub_upload": "Authorized by user",
+  "notes": "Synthetic separation is not a measurement of real broadcast RF channel separation. Original 75us de-emphasis retained.",
+  "application_version": "0.3.0"
+}

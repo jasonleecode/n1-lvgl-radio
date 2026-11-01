@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""LAN web player. Capture only N1 Radio's PulseAudio stream; one shared MP3 encoder."""
+import argparse
+import ipaddress
+import json
+import os
+from pathlib import Path
+import queue
+import select
+import signal
+import socket
+import subprocess
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+
+
+def radio_status():
+    runtime = os.environ.get('XDG_RUNTIME_DIR')
+    standard = Path(f'/run/user/{os.getuid()}')
+    if not runtime and os.access(standard, os.W_OK):
+        runtime = str(standard)
+    path = Path(runtime, 'n1-radio/control.sock') if runtime else Path(f'/tmp/n1-radio-{os.getuid()}/control.sock')
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as s:
+            s.settimeout(.5)
+            s.connect(str(path))
+            s.sendall(b'{"command":"status"}')
+            return json.loads(s.recv(16384))
+    except (OSError, ValueError):
+        return {'ok': True, 'receiving': False, 'active': False, 'message': '收音机未运行'}
+
+
+def radio_source():
+    # A sink monitor alone would leak other desktop audio. monitor-stream below
+    # isolates this application's stream, even when sharing speakers with apps.
+    def pactl(kind):
+        return json.loads(subprocess.check_output(['pactl', '-f', 'json', 'list', kind], stderr=subprocess.DEVNULL, timeout=2))
+    try:
+        stream = next(s for s in pactl('sink-inputs') if s['properties'].get('application.name') == 'N1 Radio')
+        sink = next(s for s in pactl('sinks') if s['index'] == stream['sink'])
+        return stream['index'], sink['monitor_source']
+    except (OSError, ValueError, KeyError, StopIteration, subprocess.SubprocessError):
+        return None
+
+
+def end_process(process):
+    if process is None:
+        return
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
+    for pipe in (process.stdin, process.stdout, process.stderr):
+        if pipe:
+            pipe.close()
+
+
+class Broadcast:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.clients = set()
+        self.thread = None
+        self.shutdown = threading.Event()
+        self.last_client = time.monotonic()
+        self.encode_starts = 0
+        self.error = ''
+        self.stopping = False
+
+    def subscribe(self):
+        client = queue.Queue(maxsize=24)  # Bounded per-listener MP3 backlog.
+        with self.lock:
+            if self.stopping or len(self.clients) >= 8:
+                return None
+            self.clients.add(client)
+            self.last_client = time.monotonic()
+            if self.thread is None or not self.thread.is_alive():
+                self.thread = threading.Thread(target=self.run, daemon=True)
+                self.thread.start()
+        return client
+
+    def unsubscribe(self, client):
+        with self.lock:
+            self.clients.discard(client)
+            self.last_client = time.monotonic()
+
+    def publish(self, data):
+        with self.lock:
+            for client in tuple(self.clients):
+                try:
+                    client.put_nowait(data)
+                except queue.Full:
+                    self.clients.discard(client)
+                    while not client.empty():
+                        try:
+                            client.get_nowait()
+                        except queue.Empty:
+                            break
+                    client.put_nowait(None)  # Disconnect slow listeners; never block radio.
+
+    def run(self):
+        encoder = capture = reader = None
+        try:
+            encoder = subprocess.Popen(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin',
+                '-probesize', '32', '-analyzeduration', '0', '-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'pipe:0',
+                '-c:a', 'libmp3lame', '-b:a', '128k', '-ar', '48000', '-ac', '2', '-threads', '1',
+                '-write_xing', '0', '-id3v2_version', '0', '-flush_packets', '1', '-f', 'mp3', 'pipe:1'],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+            self.encode_starts += 1
+            os.set_blocking(encoder.stdin.fileno(), False)
+            reader = threading.Thread(target=self.drain, args=(encoder,), daemon=True)
+            reader.start()
+            source = None
+            checked = 0
+            pending = b''
+            last_pcm = time.monotonic()
+            while not self.shutdown.is_set() and encoder.poll() is None:
+                now = time.monotonic()
+                with self.lock:
+                    if not self.clients and now - self.last_client > 10:
+                        # Mark stopped while holding the subscribe lock to avoid
+                        # attaching a listener to an encoder that is about to exit.
+                        self.stopping = True
+                        break
+                if now - checked >= .5:
+                    checked = now
+                    current = radio_source()
+                    if current != source or (current and (capture is None or capture.poll() is not None)):
+                        end_process(capture)
+                        capture = None
+                        source = current
+                        pending = b''
+                        if source:
+                            capture = subprocess.Popen(['parec', '--device=' + source[1], '--monitor-stream=' + str(source[0]),
+                                '--raw', '--format=s16le', '--rate=48000', '--channels=2', '--latency-msec=60'],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+                            os.set_blocking(capture.stdout.fileno(), False)
+                block = b''
+                if capture and select.select([capture.stdout], [], [], .05)[0]:
+                    block = os.read(capture.stdout.fileno(), 8192)
+                    if not block:
+                        time.sleep(.02)
+                elif not capture:
+                    time.sleep(.02)
+                if block:
+                    last_pcm = time.monotonic()
+                    pending += block
+                elif time.monotonic() - last_pcm >= .1:
+                    pending += bytes(19200)  # 100ms stereo silence keeps browser decoder alive.
+                    last_pcm = time.monotonic()
+                # Preserve PCM frame alignment across retunes and partial reads.
+                available = len(pending) // 4 * 4
+                while available and select.select([], [encoder.stdin], [], .02)[1]:
+                    try:
+                        written = os.write(encoder.stdin.fileno(), pending[:min(available,4096)])
+                        pending = pending[written:]
+                        available = len(pending) // 4 * 4
+                    except BlockingIOError:
+                        break
+                if len(pending) > 192000:
+                    pending = pending[-19200:]  # A bounded queue; prefer current audio.
+        except (OSError, subprocess.SubprocessError) as error:
+            self.error = str(error)
+            print('Web audio:', error, flush=True)
+        finally:
+            end_process(capture)
+            if encoder:
+                end_process(encoder)
+                if reader:
+                    reader.join(timeout=1)
+            # Finishing clients cannot reuse an ended MP3 response.
+            self.publish(None)
+            with self.lock:
+                self.clients.clear()
+                if self.thread is threading.current_thread():
+                    self.thread = None
+                    self.stopping = False
+
+    def drain(self, encoder):
+        try:
+            while not self.shutdown.is_set():
+                data = os.read(encoder.stdout.fileno(), 1024)
+                if not data:
+                    break
+                self.publish(data)
+        except OSError:
+            pass
+
+
+class PlayerServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            if not ipaddress.ip_address(self.client_address[0]).is_private:
+                self.send_error(403)
+                return
+            path = urlsplit(self.path).path
+            if path == '/stream.mp3':
+                self.stream()
+            elif path == '/api/status':
+                data = radio_status()
+                self.send_bytes(json.dumps(data, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
+            elif path in ('/', '/style.css', '/app.js'):
+                name, mime = {'/': ('index.html', 'text/html'), '/style.css': ('style.css', 'text/css'), '/app.js': ('app.js', 'text/javascript')}[path]
+                self.send_bytes((self.server.assets / name).read_bytes(), mime + '; charset=utf-8')
+            else:
+                self.send_error(404)
+        except (OSError, BrokenPipeError):
+            pass
+
+    def send_bytes(self, data, mime):
+        self.send_response(200)
+        self.send_header('Content-Type', mime)
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def stream(self):
+        client = self.server.broadcast.subscribe()
+        if client is None:
+            self.send_error(503, 'Listener limit reached')
+            return
+        try:
+            self.connection.settimeout(5)
+            self.send_response(200)
+            self.send_header('Content-Type', 'audio/mpeg')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            while True:
+                try:
+                    data = client.get(timeout=8)
+                except queue.Empty:
+                    break
+                if data is None:
+                    break
+                self.wfile.write(data)
+                self.wfile.flush()
+        finally:
+            self.server.broadcast.unsubscribe(client)
+
+    def log_message(self, format, *args):
+        # Polling status every 2.5s should not grow the journal indefinitely.
+        if args and str(args[0]).startswith('GET /api/status '):
+            return
+        super().log_message(format, *args)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='N1 收音机局域网页面与 MP3 音频流')
+    parser.add_argument('--host', default='0.0.0.0')
+    parser.add_argument('--port', type=int, default=8090)
+    parser.add_argument('--assets', type=Path, default=Path('/opt/n1-radio/web'))
+    args = parser.parse_args()
+    if not (args.assets / 'index.html').is_file():
+        parser.error('网页资源不存在')
+    server = PlayerServer((args.host, args.port), Handler)
+    server.assets = args.assets
+    server.broadcast = Broadcast()
+    def shutdown(*_):
+        server.broadcast.shutdown.set()
+        threading.Thread(target=server.shutdown, daemon=True).start()
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
+    print(f'N1 Radio Web listening on {args.host}:{server.server_port}', flush=True)
+    try:
+        server.serve_forever(poll_interval=.2)
+    finally:
+        server.broadcast.shutdown.set()
+        server.server_close()
+        if server.broadcast.thread:
+            server.broadcast.thread.join(timeout=6)
+
+
+if __name__ == '__main__':
+    main()

@@ -7,6 +7,8 @@ shutil.copy2(base/'n1-radio','/opt/n1-radio/bin/n1-radio.next');Path('/opt/n1-ra
 if (base/'redsea').exists():
  shutil.copy2(base/'redsea','/opt/n1-radio/bin/redsea.next');Path('/opt/n1-radio/bin/redsea.next').chmod(0o755);Path('/opt/n1-radio/bin/redsea.next').replace('/opt/n1-radio/bin/redsea')
 shutil.copy2(base/'launcher','/usr/local/bin/n1-radio');Path('/usr/local/bin/n1-radio').chmod(0o755)
+if (base/'n1-radioctl').exists():
+ shutil.copy2(base/'n1-radioctl','/usr/local/bin/n1-radioctl');Path('/usr/local/bin/n1-radioctl').chmod(0o755)
 for src,dest in [('n1-radio.desktop','/usr/local/share/applications/n1-radio.desktop'),('n1-radio.svg','/usr/local/share/icons/hicolor/scalable/apps/n1-radio.svg')]:
  p=Path(dest);p.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(base/src,p)
 subprocess.run(['update-desktop-database','/usr/local/share/applications'],check=True)
@@ -14,3 +16,11 @@ licenses=Path('/opt/n1-radio/share/licenses');licenses.mkdir(parents=True,exist_
 for name in ['LICENSE','FONT-LICENSE.txt','LVGL-LICENSE.txt','REDSEA-LICENSE.txt']:
  if (base/name).exists():shutil.copy2(base/name,licenses/name)
 print('Installed N1 Radio and application menu entry')
+
+if (base/'n1-radio-web').exists():
+ shutil.copy2(base/'n1-radio-web','/usr/local/bin/n1-radio-web');Path('/usr/local/bin/n1-radio-web').chmod(0o755)
+ if (base/'web').is_dir():shutil.copytree(base/'web','/opt/n1-radio/web',dirs_exist_ok=True)
+ if (base/'n1-radio-web.service').exists():
+  Path('/usr/local/lib/systemd/user').mkdir(parents=True,exist_ok=True)
+  shutil.copy2(base/'n1-radio-web.service','/usr/local/lib/systemd/user/n1-radio-web.service')
+ print('Web player installed; as desktop user: systemctl --user daemon-reload && systemctl --user enable --now n1-radio-web')

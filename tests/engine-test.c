@@ -10,8 +10,8 @@
 #include <time.h>
 // Deterministic audio sink: exercise the real receiver worker/process lifecycle.
 struct pa_simple {int test;};
-pa_simple *pa_simple_new(const char *a,const char *b,pa_stream_direction_t c,const char *d,const char *e,const pa_sample_spec *f,const pa_channel_map *g,const pa_buffer_attr *h,int *i){(void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g;(void)h;(void)i;return calloc(1,sizeof(pa_simple));}
-int pa_simple_write(pa_simple *s,const void *p,size_t n,int *e){(void)s;(void)p;(void)n;(void)e;return 0;}
+pa_simple *pa_simple_new(const char *a,const char *b,pa_stream_direction_t c,const char *d,const char *e,const pa_sample_spec *f,const pa_channel_map *g,const pa_buffer_attr *h,int *i){(void)a;(void)b;(void)c;(void)d;(void)e;assert(f->channels==2);(void)g;(void)h;(void)i;return calloc(1,sizeof(pa_simple));}
+int pa_simple_write(pa_simple *s,const void *p,size_t n,int *e){(void)s;(void)p;assert(n%4==0);(void)e;return 0;}
 int pa_simple_flush(pa_simple *s,int *e){(void)s;(void)e;return 0;}
 void pa_simple_free(pa_simple *s){free(s);}
 static void pause_ms(int n){struct timespec ts={n/1000,(n%1000)*1000000};nanosleep(&ts,NULL);}

@@ -1,0 +1,28 @@
+{
+  "feature": "Terminal control and headless receiver",
+  "binary_sha256": "52c2420ea19a859deaf917a1cb212244e2f8f2132cfe027c4211bbb49db5c3a0",
+  "build_host": "Mac ARM Docker",
+  "release_tests": "7/7 passed",
+  "ASan_UBSan_tests": "7/7 passed",
+  "terminal_integration_tests": [
+    "no DISPLAY required",
+    "shared configuration and control state",
+    "invalid numeric and JSON request rejection",
+    "single instance lock",
+    "settings saved on exit",
+    "stale socket recovery"
+  ],
+  "N1_hardware_tests": [
+    "GUI tune and relative step return to 97.4MHz",
+    "GUI volume and mute synchronized via control commands",
+    "stop releases rtl_fm",
+    "headless auto-start tunes and receives 97.4MHz",
+    "headless quit releases receiver before returning",
+    "GUI reopened after headless shutdown"
+  ],
+  "user_acceptance": "Passed; user confirmed normal operation and authorized GitHub update",
+  "GitHub_upload": "Authorized by user",
+  "audio_channels": 2,
+  "FM_stereo_validation": "See stereo-validation.json",
+  "application_version": "0.3.0"
+}

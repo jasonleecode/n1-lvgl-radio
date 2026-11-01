@@ -29,6 +29,8 @@
 - 默认频移栏为常见的 125MHz 示例值，不代表检测到了上变频器。
 - 软件不会自动打开 Bias-T。
 
+FM 支持导频锁定的自动立体声：从 19kHz 导频恢复 38kHz 副载波，解码 L−R，与 L+R 合成左右声道，以 48kHz 双声道输出。导频丢失时平滑回退为相同的左右声道。AUTO/MONO 按钮可强制单声道；锁定并完成立体声混合后界面才显示 FM STEREO。AM/USB/LSB/NFM 保持单声道。RDS 与立体声分别检测，收到 RDS 不代表立体声锁定。
+
 ## 使用
 
 从 XFCE 的“应用菜单 → 多媒体 → N1 收音机”打开，或运行：
@@ -62,7 +64,7 @@ sudo python3 install.py
 sh scripts/build-docker.sh /absolute/path/to/lvgl/install
 ```
 
-脚本保留构建容器与镜像，生成 `build/n1-radio`、`build/redsea` 和解码器许可证。已有 Debian arm64 构建环境可执行：
+脚本保留构建容器与镜像，生成 `build/n1-radio`、`build/n1-radioctl`、`build/redsea` 和解码器许可证。已有 Debian arm64 构建环境可执行：
 
 ```sh
 cmake -S . -B build -DCMAKE_PREFIX_PATH=/opt/lvgl/install -DCMAKE_BUILD_TYPE=Release
@@ -114,3 +116,58 @@ redsea 源码固定为 v1.3.1 / `4cc27df9939798e800c4ff7cb484be6d9bf68b4d`，MIT
 - `assets/`：桌面入口、图标与字体许可。
 
 项目自身采用 MIT 许可证，见仓库根目录 `LICENSE`；LVGL 及字体保持各自原许可证。
+
+### 终端控制与无窗口模式
+
+使用普通桌面用户（N1 上是 `n1`）执行，无需 sudo。同一用户的桌面和命令行共用接收器，避免争抢 RTL-SDR。
+
+```sh
+n1-radioctl status                 # 查询状态
+n1-radioctl tune 97.4              # 调到 97.4 MHz 并收听
+n1-radioctl tune 97400k            # 同一频率，可显式指定单位
+n1-radioctl step 100k              # 向上调 100 kHz
+n1-radioctl step -- -100k          # 向下调 100 kHz
+n1-radioctl volume 60
+n1-radioctl mute on                # off 取消静音
+n1-radioctl presets                # 列出收藏编号
+n1-radioctl preset 1               # 播放收藏 1
+n1-radioctl mode FM                # FM / AM / USB / LSB / NFM
+n1-radioctl stereo auto            # 自动 FM 立体声
+n1-radioctl stereo mono            # 强制单声道，信号弱时可用
+n1-radioctl stop                   # 停止接收，应用继续运行
+n1-radioctl start                  # 开始接收
+n1-radioctl --json status          # 脚本可读的 JSON
+n1-radioctl quit                   # 退出整个应用（也会关闭桌面窗口）
+```
+
+裸频率数字单位为 MHz，也支持 `M` / `MHz`、`k` / `kHz`、`Hz` 后缀。`tune` 可带 `--mode AM` 一次设置频率和模式；低频硬件限制仍然适用。命令返回“已接受”代表调台已排入处理，随后用 `status` 查看是否实际接收成功。
+
+桌面打开时，命令会控制桌面收音机并同步显示频率、音量和静音。应用没有运行时，`start`、`tune`、`preset` 自动启动无窗口后台进程；`n1-radioctl daemon` 只启动后台，不开始接收。后台日志位于 `~/.cache/n1-radio/headless.log`。可用 `n1-radio --headless --start` 在前台运行无窗口模式，Ctrl+C 退出。后台模式运行时如需切回桌面，先 `n1-radioctl quit`，再打开桌面应用。
+
+控制接口为当前用户私有的 Unix socket，不监听网络端口。进程锁保证同一用户仅运行一个收音机实例；异常退出后的残留 socket 可自动清理。命令行工具需要 Python 3。
+
+立体声验证使用符合 [ITU-R BS.450-4](https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.450-4-201910-I%21%21PDF-E.pdf) 导频/副载波相位关系的合成 MPX。仅左、仅右声道测试分离度约 66dB（合成信号结果，不能代表真实电台和天线的实际分离度）；另测试 ±2Hz 导频偏移、导频消失、无导频及噪声不误锁、强制单声道和跨分块一致性。保留原 75μs 去加重与 14kHz 音频低通。`n1-radioctl --json status` 提供 `pilot_locked`、`stereo`、`stereo_blend` 和 `output_channels`，双声道输出本身不等于已锁定立体声。
+
+### 局域网页收听
+
+同一局域网内用手机或电脑打开 `http://N1的IP:8090`，点击“开始收听”。浏览器需要用户点击播放，页面支持本机音量、当前频率、立体声与 RDS 信息。N1 收音机需正在接收；网页跟随当前电台，网页停止播放只断开这台设备，不停止 N1 接收。
+
+网页使用本地 HTML/CSS/JS，无外部 CDN。服务仅捕获 PulseAudio 中 `N1 Radio` 的单独音频流，不混入其他桌面程序声音；48kHz、双声道、128kbps MP3，保留已解码的左右声道。单声道模式/导频丢失时左右声道内容相同，不能以“双声道格式”判定电台正在立体声播放。N1 应用自身的音量/静音也会影响传出的音频；网页音量只影响本设备。网页相对本机声音有编码与浏览器缓冲延迟。
+
+依赖与启用：
+
+```sh
+sudo apt-get install --no-install-recommends python3 ffmpeg pulseaudio-utils
+# 安装包的 install.py 会安装脚本、web 目录和用户服务。
+# 以下两行以普通桌面用户执行：
+systemctl --user daemon-reload
+systemctl --user enable --now n1-radio-web
+```
+
+也可前台运行 `n1-radio-web --port 8090`，`--help` 查看参数。服务与收音机须为同一桌面用户。服务使用用户会话启动，未配置系统开机无人登录启动接收。更改 N1 IP 后请使用新的地址。
+
+所有听众共享一个 MP3 编码器，不另开 RTL-SDR。最多 8 台同时收听，慢客户端会断开，队列有上限。无人收听 10 秒后停止捕获/编码；网页服务保留运行，设有 192MiB 内存上限。此入口用于局域网，未配置公网发布或端口转发。
+
+实机验证可执行 `python3 tests/web-test.py --url http://127.0.0.1:8090`，需要收音机正在接收。测试网页资源、状态、同时两客户端及 MP3 解码后的双声道/非静音内容。
+
+![手机浏览器收听界面](docs/web-mobile.png)

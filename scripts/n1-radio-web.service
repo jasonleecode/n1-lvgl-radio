@@ -1,0 +1,15 @@
+[Unit]
+Description=N1 Radio LAN web player
+After=pulseaudio.service
+
+[Service]
+ExecStart=/usr/local/bin/n1-radio-web --port 8090
+Restart=on-failure
+RestartSec=3
+Nice=5
+MemoryMax=192M
+MemorySwapMax=16M
+TasksMax=64
+
+[Install]
+WantedBy=default.target
