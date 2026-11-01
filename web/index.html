@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101c24"><title>N1 收音机</title><link rel="stylesheet" href="/style.css"></head>
+<body><main><header><span class="mark">◉</span><span>N1 收音机</span><span id="connection" class="tag">连接中</span></header>
+<section class="dial"><p class="eyebrow">正在收听</p><div class="frequency"><span id="frequency">—</span><span class="unit">MHz</span></div><div class="details"><span id="mode">FM</span><span id="stereo">—</span></div><div class="scale" aria-hidden="true"></div></section>
+<section class="programme"><h1 id="station">等待电台信息</h1><p id="programme">正在连接 N1…</p></section>
+<section class="controls"><button id="play" type="button" disabled>▶ 开始收听</button><label for="volume">本机音量 <span id="volumeText">80%</span></label><input id="volume" type="range" min="0" max="100" value="80" aria-label="本机播放音量"><p id="notice" role="status">点击开始收听，在这台设备播放。</p></section>
+<footer>与 N1 共用当前电台 · 调台请在 N1 收音机或终端操作</footer><audio id="audio" preload="none"></audio></main><script src="/app.js"></script></body></html>
