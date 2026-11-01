@@ -1,0 +1,66 @@
+{
+  "application_version": "0.1.0",
+  "architecture": "aarch64",
+  "lvgl_commit": "58ae125776675b7dbbd2773ae06f02bc30fdde5d",
+  "lvgl_version": "10.0.0-dev",
+  "build_host": "Mac ARM64 Docker",
+  "tests": {
+    "release_config": "passed",
+    "release_receiver_lifecycle": "passed",
+    "ASan_UBSan_config": "passed",
+    "ASan_UBSan_receiver_lifecycle": "passed",
+    "FM_DSP": "passed in release and ASan/UBSan"
+  },
+  "hardware": {
+    "chip": "RTL2838",
+    "tuner": "R820T",
+    "modes_with_PCM_output": [
+      "FM",
+      "AM",
+      "USB",
+      "LSB",
+      "NFM"
+    ],
+    "low_frequency_direct_sampling": "not verified; requires compatible hardware",
+    "known_fix": "Drain stdout/stderr while stopping rtl_fm so SIGPIPE cannot interrupt USB cleanup",
+    "audio_buffer_fix": "Replace disabled prebuffer and tiny fixed buffer with PulseAudio default buffering",
+    "final_continuous_PCM_samples_per_second": 47838
+  },
+  "ui": {
+    "actual_render_size": [
+      1040,
+      680
+    ],
+    "Chinese_font": "Noto CJK SC common Chinese",
+    "preview": "rendered on N1/Xvfb"
+  },
+  "binary_sha256": "fd794c3bdb9fc901b404d97bcfb17e497c2cf96fdacf187238b77252890e613c",
+  "user_acceptance": "PASSED: user confirmed distortion disappeared, overall tests OK, authorized GitHub upload",
+  "GitHub_upload": "Authorized after user acceptance",
+  "GitHub_visibility": "public",
+  "GitHub_repository": "jasonleecode/n1-lvgl-radio",
+  "FM_quality": {
+    "native_demod_rate": 240000,
+    "output_rate": 48000,
+    "IQ_decimator": "rtl_fm -F 9",
+    "audio_filter": "193-tap Blackman-windowed sinc, 14kHz cutoff, 5:1 decimation",
+    "test_1kHz_RMS": 7070.85,
+    "test_19kHz_RMS": 1.354,
+    "test_38kHz_RMS": 0.0,
+    "default_RF_gain_dB": 25.4,
+    "demodulator": "rtl_fm explicit fm, -s 240000 -A std -E deemp; avoids wbfm 16kHz tuning shift"
+  },
+  "audio_buffer_fix": {
+    "before_sink_monitor_peak": 0,
+    "after_sink_monitor_peak": 10677,
+    "after_sink_monitor_RMS": 2567.97,
+    "user_confirmed_sound": true
+  },
+  "memory": {
+    "application_scope_MiB": 44.0,
+    "scope_limit_MiB": 256,
+    "scope_swap_limit_MiB": 32,
+    "limit_or_OOM_events": 0,
+    "CPU_temperature_C": 57
+  }
+}

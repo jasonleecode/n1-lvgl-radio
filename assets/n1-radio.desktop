@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=N1 Radio
+Name[zh_CN]=N1 收音机
+Comment=LVGL RTL-SDR radio receiver
+Comment[zh_CN]=基于 LVGL 的 FM、AM 和短波接收器
+Exec=/usr/local/bin/n1-radio
+Icon=n1-radio
+Terminal=false
+Categories=AudioVideo;Audio;HamRadio;
+StartupWMClass=n1-radio

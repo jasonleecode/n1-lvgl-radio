@@ -1,0 +1,8 @@
+.build-support/
+build/
+build-*/
+stage/
+*.log
+*.tmp
+__pycache__/
+.DS_Store

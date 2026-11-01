@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+export SDL_VIDEODRIVER=x11
+exec systemd-run --user --scope --quiet --collect --unit="n1-radio-$$" \
+    -p MemoryMax=256M -p MemorySwapMax=32M -- nice -n 5 /opt/n1-radio/bin/n1-radio "$@"
