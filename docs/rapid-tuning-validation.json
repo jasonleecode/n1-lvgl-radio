@@ -1,0 +1,22 @@
+{
+  "change": "Rapid tuning USB initialization protection and coalesced tuning/settings writes",
+  "binary_sha256": "705baafb33359f92c649a3a2cd14fe92e84e434f7f9fc1f72998f8a399626c68",
+  "build_host": "Mac ARM Docker",
+  "release_ctest": "5/5 passed",
+  "ASan_UBSan_ctest": "5/5 passed",
+  "hardware_RTL2838_R820T": {
+    "updates_per_burst": 24,
+    "final_frequency_hz": 97400000,
+    "PCM_samples_in_following_second_by_interval_ms": {
+      "30": 45875,
+      "100": 45875,
+      "300": 47924,
+      "600": 49152
+    },
+    "USB_errors_after_replug_and_fixed_tests": false
+  },
+  "actual_UI_test": "12 plus and 12 minus clicks, 60ms press / 60ms release; recovered final 97.4MHz with PCM and nonzero audio level",
+  "user_acceptance": "Rapid tuning and audio verified by user; GitHub update authorized",
+  "GitHub_update": "Authorized by user",
+  "application_version": "0.2.1"
+}

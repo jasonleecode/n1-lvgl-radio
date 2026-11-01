@@ -80,15 +80,15 @@ sh scripts/build-redsea.sh "$PWD/build/deps"
 - `radio-dsp-test`：测试 1kHz 通带、19kHz 导频与 38kHz 立体声分量抑制，以及跨分块流式处理一致性。
 - `radio-rds-test`：JSON/Unicode、台站变更、缺失与损坏数据、检测超时、分片输出、解码器缺失与异常退出。
 - `radio-rds-reference-check`：用真实录制 MPX 样本验证 240kHz 输入、redsea 解码和应用元数据链路。
-- `radio-engine-test`：模拟 RTL 接收器和音频服务，测试接收、音量不重启设备、连续 8 次调台、停止、设备占用后重试和退出。
-- `radio-hardware-check`：需要真实接收棒与 PulseAudio；在静音状态依次验证 FM / AM / USB / LSB / NFM 产生 PCM 音频数据。不会证明收到具体电台或验证低频直采硬件。
+- `radio-engine-test`：模拟 RTL 接收器和音频服务，测试接收、音量不重启设备、连续 8 次调台、40 次快速调台合并、初始化期间取消调台、停止、设备占用后重试和退出。
+- `radio-hardware-check`：需要真实接收棒与 PulseAudio；在静音状态依次验证 FM / AM / USB / LSB / NFM 产生 PCM 音频数据。`--rapid` 额外验证 30/100/300/600ms 间隔连续调台后恢复 PCM。不会证明收到具体电台或验证低频直采硬件。
 - `scripts/preview.py`：在独立 Xvfb 上渲染实际 LVGL 界面，生成截图，不接收无线电。
 
 ```sh
 build/radio-hardware-check
 ```
 
-实机测试中修复了退出接收进程时过早关闭管道的问题：现在先发送 SIGINT，并在 USB 清理期间排空管道，再关闭文件描述符。USB 供电或硬件掉线仍可能需要重插。
+实机测试中修复了退出接收进程时过早关闭管道的问题：现在先发送 SIGINT，并在 USB 清理期间排空管道，再关闭文件描述符。快速调台时等待输入稳定 400ms 后只打开最终频率；若取消发生在 USB 初始化期间，则先等待首个 PCM 块或最多 1.5 秒的初始化宽限再发送 SIGINT。频率设置在停止操作 750ms 后合并保存，避免每次点击都同步写盘。USB 供电或硬件掉线仍可能需要重插。
 
 首次用户测试发现无声：接收端 PCM 正常但输出缓冲几乎一直为空。已移除自定义的零预缓冲 / 小缓冲，改用 PulseAudio 标准缓冲，兼容蓝牙输出。
 

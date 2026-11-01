@@ -30,7 +30,7 @@ typedef struct {
     unsigned generation;
     float audio_level;
     char message[256];
-    uint64_t audio_samples;
+    uint64_t audio_samples, tuning_requested_ms;
     rds_info rds;
 } radio_engine;
 

@@ -35,6 +35,8 @@ static const int gains[]={-1,0,125,197,254,280,328,372,402,439,496};
 static int64_t steps[]={100,1000,10000,100000,1000000};
 static const char *band="FM 广播";
 static bool ui_play_state=false;
+static bool save_pending=false;
+static uint32_t save_due=0;
 
 static lv_obj_t *label(lv_obj_t *parent,const char *text,int x,int y,unsigned color) {
     lv_obj_t *o=lv_label_create(parent);lv_obj_set_style_text_font(o,&radio_font_20,0);lv_label_set_text(o,text);lv_obj_set_pos(o,x,y);lv_obj_set_style_text_color(o,lv_color_hex(color),0);return o;
@@ -87,7 +89,7 @@ static void refresh_tuning(void) {
 static void apply(void) {
     char error[256];if(active && !radio_validate(&cfg,error,sizeof(error))){active=false;tell(error);}
     if(!demo)engine_apply(&engine,&cfg,active);
-    refresh_tuning();save();
+    refresh_tuning();save_pending=true;save_due=lv_tick_get()+750;
 }
 static void close_modal(void) {if(overlay){lv_obj_delete(overlay);overlay=NULL;modal=NULL;edit=NULL;}}
 static void close_event(lv_event_t *e){(void)e;close_modal();}
@@ -223,6 +225,7 @@ static void update_rds(void) {
     if(color!=old_color){lv_obj_set_style_text_color(rds_name_label,lv_color_hex(color),0);old_color=color;}
 }
 static void update(lv_timer_t *timer) {
+    if(save_pending && (int32_t)(lv_tick_get()-save_due)>=0){save_pending=false;save();}
     (void)timer;bool receiving=false;float level=0;char message[256]="准备就绪";
     if(!demo)engine_snapshot(&engine,&active,&receiving,message,sizeof(message),&level);
     if(demo && active){receiving=true;level=.08f+.06f*sinf(lv_tick_get()/600.0f);snprintf(message,sizeof(message),"界面预览，不连接接收器");}

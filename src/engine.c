@@ -14,6 +14,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
+
+static uint64_t monotonic_ms(void) {
+    struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);
+    return (uint64_t)t.tv_sec*1000+(uint64_t)t.tv_nsec/1000000;
+}
 extern char **environ;
 
 static void status(radio_engine *e, const char *s, bool live) {
@@ -24,10 +30,21 @@ static void status(radio_engine *e, const char *s, bool live) {
 static bool changed(radio_engine *e, unsigned gen) {
     pthread_mutex_lock(&e->lock);bool stop=e->quit || !e->active || gen!=e->generation;pthread_mutex_unlock(&e->lock);return stop;
 }
-static void stop_child(pid_t pid, int audio, int errors) {
+static void stop_child(pid_t pid, int audio, int errors, uint64_t started) {
     if(pid<=0)return;
     // Keep pipes open and drain them during shutdown. Closing stdout/stderr
     // first can SIGPIPE rtl_fm before it cancels USB transfers and closes SDR.
+    // rtl_fm installs its cleanup path after opening/configuring USB. Do not
+    // interrupt that initialization halfway through a rapid retune. Wait for
+    // the first PCM block (or a bounded grace period), discarding old data.
+    while(started && monotonic_ms()-started<1500) {
+        char discard[4096];
+        if(read(audio,discard,sizeof(discard))>0)break;
+        for(int j=0;j<8;j++)if(read(errors,discard,sizeof(discard))<=0)break;
+        pid_t r=waitpid(pid,NULL,WNOHANG);
+        if(r==pid || (r<0 && errno==ECHILD)){usleep(80000);return;}
+        usleep(20000);
+    }
     kill(pid,SIGINT);
     for(int i=0;i<150;i++) {
         char discard[4096];
@@ -82,12 +99,14 @@ static void publish_rds(radio_engine *e,const rds_info *info,unsigned generation
 }
 static void receive(radio_engine *e, radio_config *c, unsigned generation) {
     char invalid[256];if(!radio_validate(c,invalid,sizeof(invalid))){status(e,invalid,false);return;}
+    if(changed(e,generation))return;
     status(e,"正在打开接收器…",false);
+    uint64_t started=monotonic_ms();
     int audio=-1,errors=-1;pid_t pid=start_child(c,&audio,&errors);
     if(pid<0){status(e,"无法启动 rtl_fm，请检查程序是否已安装",false);return;}
     pa_sample_spec spec={.format=PA_SAMPLE_S16LE,.rate=(uint32_t)radio_sample_rate(c->mode),.channels=1};
     int error=0;pa_simple *pa=pa_simple_new(NULL,"N1 Radio",PA_STREAM_PLAYBACK,NULL,"Radio audio",&spec,NULL,NULL,&error);
-    if(!pa){stop_child(pid,audio,errors);close(audio);close(errors);status(e,"无法连接音频服务，请检查声音输出",false);return;}
+    if(!pa){stop_child(pid,audio,errors,started);close(audio);close(errors);status(e,"无法连接音频服务，请检查声音输出",false);return;}
     _Alignas(int16_t) unsigned char bytes[4097];size_t carry=0;char log[4096]={0};size_t used=0;bool failed=false,playing=false;fm_resampler fm;fm_resampler_init(&fm);
     rds_decoder *rds=NULL;
     if(c->mode==MODE_WFM){
@@ -109,6 +128,7 @@ static void receive(radio_engine *e, radio_config *c, unsigned generation) {
             ssize_t n=read(audio,bytes+carry,sizeof(bytes)-1-carry);
             if(n==0){failed=true;break;}
             if(n<0){if(errno==EAGAIN||errno==EINTR)continue;failed=true;break;}
+            started=0; // PCM proves USB initialization has completed.
             size_t count=(size_t)n+carry,even=count&~(size_t)1;
             bool mute;int volume;
             pthread_mutex_lock(&e->lock);mute=e->config.mute;volume=e->config.volume;pthread_mutex_unlock(&e->lock);
@@ -130,7 +150,7 @@ static void receive(radio_engine *e, radio_config *c, unsigned generation) {
         }
     }
     if(rds){rds_decoder_stop(rds);free(rds);}
-    pa_simple_flush(pa,NULL);pa_simple_free(pa);stop_child(pid,audio,errors);close(audio);close(errors);
+    pa_simple_flush(pa,NULL);pa_simple_free(pa);stop_child(pid,audio,errors,started);close(audio);close(errors);
     if(failed && !changed(e,generation)) {
         if(strstr(log,"-6")||strstr(log,"busy")||strstr(log,"claim"))status(e,"接收器被占用，请先退出 Gqrx 或其他收音机",false);
         else if(strstr(log,"No supported")||strstr(log,"not found")||strstr(log,"-4"))status(e,"未找到接收器，请检查 USB 连接",false);
@@ -144,6 +164,15 @@ static void *worker(void *arg) {
         pthread_mutex_lock(&e->lock);bool quit=e->quit,active=e->active;unsigned gen=e->generation;radio_config c=e->config;pthread_mutex_unlock(&e->lock);
         if(quit)break;
         if(gen!=handled){
+            if(active){
+                // Open USB only after tuning has settled. New requests replace
+                // pending ones rather than starting obsolete receiver processes.
+                pthread_mutex_lock(&e->lock);
+                uint64_t requested=e->tuning_requested_ms;
+                pthread_mutex_unlock(&e->lock);
+                if(monotonic_ms()-requested<400){usleep(20000);continue;}
+                if(changed(e,gen))continue;
+            }
             handled=gen;
             if(active){
                 receive(e,&c,gen);
@@ -163,7 +192,7 @@ bool engine_init(radio_engine *e, const radio_config *c) {
 void engine_apply(radio_engine *e,const radio_config *c,bool active) {
     pthread_mutex_lock(&e->lock);
     bool retune=e->active!=active || e->config.hz!=c->hz || e->config.mode!=c->mode || e->config.input!=c->input || e->config.offset_hz!=c->offset_hz || e->config.ppm!=c->ppm || e->config.rf_gain!=c->rf_gain;
-    if(retune){e->generation++;e->receiving=false;e->audio_level=0;memset(&e->rds,0,sizeof(e->rds));e->rds.state=active?(c->mode==MODE_WFM?RDS_WAITING:RDS_NOT_FM):RDS_IDLE;}
+    if(retune){e->tuning_requested_ms=monotonic_ms();e->generation++;e->receiving=false;e->audio_level=0;memset(&e->rds,0,sizeof(e->rds));e->rds.state=active?(c->mode==MODE_WFM?RDS_WAITING:RDS_NOT_FM):RDS_IDLE;}
     // Permit a retry after a failed start even if tuning parameters did not change.
     if(active && !e->active)e->generation++;
     e->config=*c;e->active=active;pthread_mutex_unlock(&e->lock);
